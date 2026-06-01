@@ -1,0 +1,52 @@
+model:
+  # Gemma 4 — there is no 12B variant; we pin the 31B dense model.
+  # NOTE: revision is a placeholder; replace with the exact pinned commit SHA at build time.
+  repo_id: "google/gemma-4-31B-it"
+  revision: "REPLACE_WITH_PINNED_40_CHAR_SHA"
+  local_path: "/opt/models/gemma-4-31B-it"
+  hidden_size: 5376
+  num_hidden_layers: 60
+  steer_layer: 32
+
+quant:
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_use_double_quant: true
+
+submission:
+  tensor_name: "direction"
+  expected_shape: [5376]
+  expected_dtype: "float32"
+  norm_tolerance: 1.0e-3        # |L2_norm(direction) - 1| <= tol
+  alpha_min: -20.0
+  alpha_max: 20.0
+
+generation:
+  max_new_tokens: 64
+  do_sample: false              # greedy decode
+  seed: 1234
+  batch_size: 16
+  padding_side: "left"
+  attn_implementation: "eager"
+
+prompts:
+  pool_path: "/app/data/prompt_pool.jsonl"
+  pool_sha256_path: "/app/data/prompt_pool.sha256"
+  per_day: 150
+  pool_size: 20000
+  dataset: "unsloth/alpaca-cleaned"
+  dataset_revision: "REPLACE_WITH_PINNED_DATASET_SHA"
+
+concepts:
+  active_allowed:
+    - "birthday_cake"
+    - "medical_disclaimer"
+    - "positive_sentiment"
+    - "hedging"
+
+detectors:
+  birthday_cake: "v1"
+  medical_disclaimer: "v1"
+  positive_sentiment: "v1"
+  hedging: "v1"

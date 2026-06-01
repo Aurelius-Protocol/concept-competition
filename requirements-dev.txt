@@ -1,0 +1,5 @@
+# Development / test dependencies (no GPU required for the non-gpu suite).
+pytest
+pytest-mock
+httpx
+ruff

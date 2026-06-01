@@ -1,0 +1,9 @@
+.git
+__pycache__
+*.pyc
+.pytest_cache
+tests
+*.md
+data/prompt_pool.jsonl
+data/prompt_pool.sha256
+.ruff_cache
