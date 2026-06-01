@@ -1,0 +1,62 @@
+# Dev/CI overlay for a fast plumbing dry-run — NOT a competition config.
+#
+# Swaps the 12B Gemma 3 for a ~135M model so the entire pipeline
+# (load -> steer via forward hook -> generate -> detect -> score) can be exercised on
+# Apple Silicon (MPS) or CPU in a couple of minutes, before committing to the ~24 GB run.
+#
+# Use it by pointing CONCEPT_SCORER_CONFIG at this file:
+#   export CONCEPT_SCORER_CONFIG=config/competition.dev.yaml
+#
+# `local_path` is a Hugging Face repo id (not a local dir), so from_pretrained fetches
+# the model on first use — no separate download step.
+model:
+  repo_id: "HuggingFaceTB/SmolLM2-135M-Instruct"
+  revision: "main"
+  local_path: "HuggingFaceTB/SmolLM2-135M-Instruct"
+  hidden_size: 576
+  num_hidden_layers: 30
+  steer_layer: 12
+
+# Quant block is required by the schema but ignored off-CUDA (auto => unquantized on MPS/CPU).
+quant:
+  load_in_4bit: true
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_use_double_quant: true
+
+submission:
+  tensor_name: "direction"
+  expected_shape: [576]
+  expected_dtype: "float32"
+  norm_tolerance: 1.0e-3
+  alpha_min: -20.0
+  alpha_max: 20.0
+
+generation:
+  max_new_tokens: 48
+  do_sample: false
+  seed: 1234
+  batch_size: 8
+  padding_side: "left"
+  attn_implementation: "eager"
+
+prompts:
+  pool_path: "data/dev_pool.jsonl"
+  pool_sha256_path: "data/dev_pool.sha256"
+  per_day: 16
+  pool_size: 256
+  dataset: "unsloth/alpaca-cleaned"
+  dataset_revision: "main"
+
+concepts:
+  active_allowed:
+    - "birthday_cake"
+    - "medical_disclaimer"
+    - "positive_sentiment"
+    - "hedging"
+
+detectors:
+  birthday_cake: "v1"
+  medical_disclaimer: "v1"
+  positive_sentiment: "v1"
+  hedging: "v1"

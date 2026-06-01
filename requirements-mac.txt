@@ -1,0 +1,23 @@
+# Local Apple-Silicon (MPS) runtime deps for running the scorer on a Mac GPU.
+#
+# This is NOT the pinned CUDA image set (see requirements.txt, used by the Dockerfile).
+# Differences that matter on Apple Silicon:
+#   * NO bitsandbytes  — 4-bit NF4 is CUDA-only; on MPS we run the model unquantized in bf16.
+#   * recent torch     — needs an arm64/MPS build new enough for this Mac (M5 / macOS 26),
+#                        not the CUDA-pinned torch==2.5.1.
+#   * transformers 5.5.2+ — first releases that ship the Gemma 4 model classes.
+#
+# Resolve to current stable wheels (Python 3.12 recommended; see README "Apple Silicon").
+torch>=2.7
+transformers>=5.5.2
+accelerate>=1.3
+safetensors>=0.4.5
+huggingface_hub>=0.27
+datasets>=3.2
+fastapi>=0.115
+uvicorn[standard]>=0.34
+pydantic>=2.10
+pyyaml>=6
+python-multipart>=0.0.20
+openai>=1.30        # OpenAI-compatible client for the LM Studio (black-box) backend
+hf_transfer>=0.1    # faster large-file downloads (optional; HF_HUB_ENABLE_HF_TRANSFER=1)

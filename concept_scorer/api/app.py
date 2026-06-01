@@ -36,11 +36,9 @@ def create_app(state: AppState | None = None) -> FastAPI:
         if state.pool is None:
             state.pool = PromptPool.from_jsonl(state.settings.prompts.pool_path)
         if state.load_model and state.runtime is None:
-            from ..model_runtime import ModelRuntime
+            from ..backends import build_backend
 
-            rt = ModelRuntime(state.settings)
-            rt.load()
-            state.runtime = rt
+            state.runtime = build_backend(state.settings)
         yield
 
     app = FastAPI(title="concept-scorer", lifespan=lifespan)

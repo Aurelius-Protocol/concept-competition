@@ -13,34 +13,72 @@ from .steering import SteeringHook
 from .submission import Submission
 
 
+def select_device(pref: str) -> str:
+    """Resolve ``auto`` to the best available device: cuda > mps > cpu."""
+    import torch
+
+    pref = (pref or "auto").lower()
+    if pref in ("cuda", "mps", "cpu"):
+        return pref
+    if torch.cuda.is_available():
+        return "cuda"
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def use_quantization(quantize: str, device: str) -> bool:
+    """Whether to load with bitsandbytes 4-bit. Only meaningful (and supported) on CUDA."""
+    quantize = (quantize or "auto").lower()
+    if quantize == "on":
+        return True
+    if quantize == "off":
+        return False
+    return device == "cuda"  # auto
+
+
 class ModelRuntime:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.model = None
         self.tokenizer = None
+        self.device = None
         self._gen_cfg = None
         self.ready = False
 
     def load(self) -> None:
         import torch
-        from transformers import AutoTokenizer, BitsAndBytesConfig, Gemma4ForCausalLM
+        from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        q = self.settings.quant
-        bnb = BitsAndBytesConfig(
-            load_in_4bit=q.load_in_4bit,
-            bnb_4bit_quant_type=q.bnb_4bit_quant_type,
-            bnb_4bit_compute_dtype=self.settings.compute_dtype(),
-            bnb_4bit_use_double_quant=q.bnb_4bit_use_double_quant,
-        )
         m = self.settings.model
-        self.model = Gemma4ForCausalLM.from_pretrained(
-            m.local_path,
-            revision=m.revision,
-            quantization_config=bnb,
-            torch_dtype=self.settings.compute_dtype(),
-            device_map={"": 0},
+        device = select_device(self.settings.runtime.device)
+        quantize = use_quantization(self.settings.runtime.quantize, device)
+        dtype = self.settings.compute_dtype()
+
+        kwargs = dict(
+            dtype=dtype,  # transformers >=5 name (formerly torch_dtype)
             attn_implementation=self.settings.generation.attn_implementation,
+            low_cpu_mem_usage=True,
         )
+        if quantize:
+            # CUDA-only path: bitsandbytes 4-bit NF4 (the competition / container default).
+            from transformers import BitsAndBytesConfig
+
+            q = self.settings.quant
+            kwargs["quantization_config"] = BitsAndBytesConfig(
+                load_in_4bit=q.load_in_4bit,
+                bnb_4bit_quant_type=q.bnb_4bit_quant_type,
+                bnb_4bit_compute_dtype=dtype,
+                bnb_4bit_use_double_quant=q.bnb_4bit_use_double_quant,
+            )
+            kwargs["device_map"] = {"": 0}
+        else:
+            # MPS / CPU path: unquantized bf16, weights placed directly on the device.
+            kwargs["device_map"] = {"": device}
+
+        self.device = device
+        self.model = AutoModelForCausalLM.from_pretrained(m.local_path, revision=m.revision, **kwargs)
         self.model.eval()
 
         # Pinned-architecture assertions: fail fast if the wrong checkpoint loaded.
@@ -62,7 +100,7 @@ class ModelRuntime:
             self.tokenizer, self.settings.generation.max_new_tokens
         )
 
-        # Warm-up forward to trigger CUDA / bitsandbytes kernel init.
+        # Warm-up forward to trigger backend kernel init (CUDA/bitsandbytes or Metal/MPS).
         with torch.no_grad():
             warm = self.tokenizer("warmup", return_tensors="pt").to(self.model.device)
             self.model.generate(**warm, max_new_tokens=1)
@@ -84,6 +122,7 @@ class ModelRuntime:
             layer_idx=self.settings.model.steer_layer,
             direction=direction,
             alpha=submission.alpha,
+            mode=self.settings.runtime.steer_mode,
         ):
             return batched_greedy_generate(
                 self.model,

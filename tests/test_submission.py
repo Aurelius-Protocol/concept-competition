@@ -97,7 +97,7 @@ def test_concept_mismatch():
 
 
 def test_alpha_out_of_bounds():
-    _expect(_blob(meta=_valid_meta(alpha="999.0")), ErrorCode.ALPHA_OUT_OF_BOUNDS)
+    _expect(_blob(meta=_valid_meta(alpha="99999.0")), ErrorCode.ALPHA_OUT_OF_BOUNDS)
 
 
 def test_unreadable_file():

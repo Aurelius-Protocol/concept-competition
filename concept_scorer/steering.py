@@ -27,9 +27,11 @@ def resolve_layers(model) -> "torch.nn.ModuleList":
 
 
 class SteeringHook:
-    def __init__(self, model, layer_idx: int, direction: "torch.Tensor", alpha: float):
+    def __init__(self, model, layer_idx: int, direction: "torch.Tensor", alpha: float,
+                 mode: str = "absolute"):
         self._layer = resolve_layers(model)[layer_idx]
         self._alpha = float(alpha)
+        self._mode = mode
         # Keep a CPU float32 copy; cast/move to the hidden-state device+dtype lazily.
         self._direction_cpu = direction.detach().to(torch.float32).reshape(-1).cpu()
         self._cached_key = None
@@ -43,12 +45,20 @@ class SteeringHook:
             self._cached_key = key
         return self._cached_vec
 
+    def _apply(self, hs: "torch.Tensor") -> "torch.Tensor":
+        vec = self._steer_vec(hs)
+        if self._mode == "norm_relative":
+            # Scale the push by each position's residual norm, so `alpha` is a fraction of
+            # the residual magnitude (model/layer/position-agnostic). Norm in float32 for
+            # stability (Gemma's residual norms can be ~1e5).
+            scale = hs.float().norm(dim=-1, keepdim=True).to(hs.dtype)
+            return hs + self._alpha * scale * vec
+        return hs + self._alpha * vec
+
     def _hook(self, module, inputs, output):
         if isinstance(output, tuple):
-            hs = output[0]
-            hs = hs + self._alpha * self._steer_vec(hs)
-            return (hs, *output[1:])
-        return output + self._alpha * self._steer_vec(output)
+            return (self._apply(output[0]), *output[1:])
+        return self._apply(output)
 
     def __enter__(self) -> "SteeringHook":
         self._handle = self._layer.register_forward_hook(self._hook)

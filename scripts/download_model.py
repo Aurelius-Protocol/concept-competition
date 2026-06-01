@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Build-time: bake the pinned Gemma 4 model into the image.
+"""Build-time: bake the pinned Gemma 3 model into the image.
 
 Two modes:
 
 * ``--mode snapshot`` (default): download the pinned-revision checkpoint as-is into
   ``local_path``. The model is quantized to NF4 on load at runtime (simplest; larger
-  image, ~62 GB for the 31B bf16 weights).
+  image, ~24 GB for the 12B bf16 weights).
 
 * ``--mode prequant``: load the checkpoint with the competition's NF4 BitsAndBytesConfig
-  and ``save_pretrained`` the 4-bit model into ``local_path`` (~18-20 GB image,
-  recommended for the 31B). The saved config records the NF4 quantization params.
+  and ``save_pretrained`` the 4-bit model into ``local_path`` (~7-8 GB image,
+  recommended for the 12B). The saved config records the NF4 quantization params.
 
 In both modes the *source* checkpoint revision SHA is the pinned identity, recorded in
 ``/info``. Requires an HF token (passed as a docker build secret) for gated models.
@@ -49,14 +49,16 @@ def main() -> None:
             revision=revision,
             local_dir=local_path,
             token=token,
-            allow_patterns=["*.safetensors", "*.json", "tokenizer*", "*.model"],
+            # *.jinja: modern tokenizers ship the chat template as a standalone
+            # chat_template.jinja (no longer embedded in tokenizer_config.json).
+            allow_patterns=["*.safetensors", "*.json", "tokenizer*", "*.model", "*.jinja"],
         )
         print(f"snapshotted {repo_id}@{revision} -> {local_path}")
         return
 
     # prequant: load + quantize + save the 4-bit model.
     import torch
-    from transformers import AutoTokenizer, BitsAndBytesConfig, Gemma4ForCausalLM
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
     q = settings.quant
     bnb = BitsAndBytesConfig(
@@ -65,9 +67,9 @@ def main() -> None:
         bnb_4bit_compute_dtype=settings.compute_dtype(),
         bnb_4bit_use_double_quant=q.bnb_4bit_use_double_quant,
     )
-    model = Gemma4ForCausalLM.from_pretrained(
+    model = AutoModelForCausalLM.from_pretrained(
         repo_id, revision=revision, quantization_config=bnb,
-        torch_dtype=settings.compute_dtype(), device_map={"": 0}, token=token,
+        dtype=settings.compute_dtype(), device_map={"": 0}, token=token,
     )
     text_cfg = getattr(model.config, "text_config", model.config)
     assert text_cfg.hidden_size == settings.model.hidden_size, "hidden_size acceptance gate failed"

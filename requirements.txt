@@ -1,15 +1,15 @@
 # Runtime dependencies — pinned for reproducible image builds.
 #
-# IMPORTANT: `transformers` MUST be a release that ships the Gemma 4 model classes
-# (`Gemma4ForCausalLM` / model_type "gemma4_text"). Gemma 4 was released April 2026;
-# pick the latest stable release that loads google/gemma-4-31B-it, then freeze the exact
-# version here. The Docker build asserts hidden_size==5376 & num_hidden_layers==60 as an
-# acceptance gate, so a transformers that cannot load the model will fail the build.
+# IMPORTANT: `transformers` MUST be a release that supports Gemma 3 (model_type "gemma3"
+# / "gemma3_text", loadable via AutoModelForCausalLM). Pick the latest stable release that
+# loads google/gemma-3-12b-it, then freeze the exact version here. The Docker build asserts
+# hidden_size==3840 & num_hidden_layers==48 as an acceptance gate, so a transformers that
+# cannot load the model will fail the build. (Verified working locally: transformers 5.9.0.)
 #
 # The torch / bitsandbytes versions must match the CUDA base image (see Dockerfile) and
 # are part of the reproducibility pin set (§2 of the spec). Fill exact versions at build.
 torch==2.5.1
-transformers>=4.60.0          # REPLACE with the exact Gemma 4-capable version, pinned
+transformers>=4.50.0          # REPLACE with the exact Gemma 3-capable version, pinned
 bitsandbytes==0.45.0
 accelerate==1.3.0
 safetensors==0.4.5

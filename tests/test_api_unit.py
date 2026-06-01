@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 
-import pytest
 from fastapi.testclient import TestClient
 
 from concept_scorer.api.app import AppState, create_app
@@ -111,4 +110,4 @@ def test_healthz_and_info():
         assert info["hidden_size"] == H
         assert info["steer_layer"] == 32
         assert set(info["allowed_concepts"]) == set(SETTINGS.concepts.active_allowed)
-        assert info["repo_id"] == "google/gemma-4-31B-it"
+        assert info["repo_id"] == "google/gemma-3-12b-it"

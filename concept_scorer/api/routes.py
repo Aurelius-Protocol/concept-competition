@@ -7,6 +7,7 @@ import base64
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 
+from ..backends import SteeringUnsupported
 from ..errors import SubmissionError
 from ..scorer import score_submission
 from ..schemas import (
@@ -58,16 +59,22 @@ async def _score(state, raw: bytes, active_concept, day_index, seed, return_comp
         return JSONResponse(status_code=422, content=e.to_dict())
 
     # Serialize GPU access: a single model is not safe under concurrent generation.
-    if state.lock is not None:
-        async with state.lock:
+    try:
+        if state.lock is not None:
+            async with state.lock:
+                result = score_submission(
+                    state.runtime, settings, submission, active_concept,
+                    day_index, seed, state.pool, return_completions,
+                )
+        else:
             result = score_submission(
                 state.runtime, settings, submission, active_concept,
                 day_index, seed, state.pool, return_completions,
             )
-    else:
-        result = score_submission(
-            state.runtime, settings, submission, active_concept,
-            day_index, seed, state.pool, return_completions,
+    except SteeringUnsupported as e:
+        return JSONResponse(
+            status_code=422,
+            content={"error_code": "steering_unsupported", "message": str(e), "detail": None},
         )
     return _build_response(result, submission, active_concept, day_index, seed)
 

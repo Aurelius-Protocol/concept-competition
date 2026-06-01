@@ -10,13 +10,13 @@ from concept_scorer.detectors import DETECTOR_REGISTRY
 
 def test_default_config_loads_and_holds_invariants():
     s = load_settings()
-    # Gemma 4 31B pinned facts.
-    assert s.model.repo_id == "google/gemma-4-31B-it"
-    assert s.model.hidden_size == 5376
-    assert s.model.num_hidden_layers == 60
+    # Gemma 3 12B pinned facts.
+    assert s.model.repo_id == "google/gemma-3-12b-it"
+    assert s.model.hidden_size == 3840
+    assert s.model.num_hidden_layers == 48
     assert s.model.steer_layer == 32
     # Submission shape tracks hidden_size.
-    assert s.submission.expected_shape == (5376,)
+    assert s.submission.expected_shape == (3840,)
     assert s.submission.expected_dtype == "float32"
     # Alpha bounds ordered.
     assert s.submission.alpha_min < s.submission.alpha_max

@@ -27,6 +27,9 @@ def set_determinism(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    mps = getattr(torch.backends, "mps", None)
+    if mps is not None and mps.is_available() and hasattr(torch, "mps"):
+        torch.mps.manual_seed(seed)
 
 
 def format_prompts(tokenizer, instructions: list[str]) -> list[str]:
