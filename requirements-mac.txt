@@ -3,13 +3,14 @@
 # This is NOT the pinned CUDA image set (see requirements.txt, used by the Dockerfile).
 # Differences that matter on Apple Silicon:
 #   * NO bitsandbytes  — 4-bit NF4 is CUDA-only; on MPS we run the model unquantized in bf16.
-#   * recent torch     — needs an arm64/MPS build new enough for this Mac (M5 / macOS 26),
+#   * recent torch     — needs an arm64/MPS build new enough for this Mac (M-series),
 #                        not the CUDA-pinned torch==2.5.1.
-#   * transformers 5.5.2+ — first releases that ship the Gemma 4 model classes.
+#   * recent transformers — must support Gemma 3 and the `dtype=` from_pretrained kwarg
+#                        (>=4.56); verified working on MPS with 5.9.0.
 #
 # Resolve to current stable wheels (Python 3.12 recommended; see README "Apple Silicon").
 torch>=2.7
-transformers>=5.5.2
+transformers>=4.56
 accelerate>=1.3
 safetensors>=0.4.5
 huggingface_hub>=0.27
@@ -20,4 +21,3 @@ pydantic>=2.10
 pyyaml>=6
 python-multipart>=0.0.20
 openai>=1.30        # OpenAI-compatible client for the LM Studio (black-box) backend
-hf_transfer>=0.1    # faster large-file downloads (optional; HF_HUB_ENABLE_HF_TRANSFER=1)

@@ -17,7 +17,8 @@ model:
   num_hidden_layers: 30
   steer_layer: 12
 
-# Quant block is required by the schema but ignored off-CUDA (auto => unquantized on MPS/CPU).
+# Quant block is required by the schema. Off-CUDA the 4-bit settings are unused, but
+# bnb_4bit_compute_dtype still sets the (unquantized) load dtype — keep it bfloat16.
 quant:
   load_in_4bit: true
   bnb_4bit_quant_type: "nf4"

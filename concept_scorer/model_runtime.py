@@ -1,8 +1,9 @@
-"""Warm model runtime: holds the quantized Gemma 4 model + tokenizer in memory.
+"""Warm model runtime: holds the model + tokenizer in memory.
 
 Loaded once (at service startup or first CLI call); each scoring request reuses the warm
-model. Generation runs under a :class:`SteeringHook` so ``alpha * direction`` is injected
-into the layer-32 residual stream for every token.
+model. The device is auto-detected (CUDA: bitsandbytes 4-bit; MPS/CPU: unquantized bf16).
+Generation runs under a :class:`SteeringHook` so ``alpha * direction`` is injected into the
+layer-32 residual stream for every token.
 """
 
 from __future__ import annotations
@@ -122,7 +123,6 @@ class ModelRuntime:
             layer_idx=self.settings.model.steer_layer,
             direction=direction,
             alpha=submission.alpha,
-            mode=self.settings.runtime.steer_mode,
         ):
             return batched_greedy_generate(
                 self.model,

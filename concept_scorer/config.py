@@ -94,7 +94,6 @@ class RuntimeCfg:
 
     device: str = "auto"          # auto | cuda | mps | cpu
     quantize: str = "auto"        # auto | on | off  (auto => on iff device == cuda)
-    steer_mode: str = "absolute"  # absolute (hs += a*dir) | norm_relative (hs += a*||hs||*dir)
     backend: str = "local"        # local (in-process, can steer) | openai (black-box)
     openai_base_url: str | None = None
     openai_model: str | None = None
@@ -115,6 +114,8 @@ class Settings:
     runtime: RuntimeCfg = field(default_factory=RuntimeCfg)
 
     def compute_dtype(self) -> "Any":  # returns a torch.dtype
+        # Sourced from quant.bnb_4bit_compute_dtype, but also used as the model load dtype on
+        # the non-quantized (MPS/CPU) paths — keep it bfloat16 unless you mean both.
         import torch
 
         return {
@@ -177,7 +178,6 @@ def _runtime_from_env() -> RuntimeCfg:
     return RuntimeCfg(
         device=(_env("CONCEPT_SCORER_DEVICE") or "auto").lower(),
         quantize=(_env("CONCEPT_SCORER_QUANTIZE") or "auto").lower(),
-        steer_mode=(_env("CONCEPT_SCORER_STEER_MODE") or "absolute").lower(),
         backend=(_env("CONCEPT_SCORER_BACKEND") or "local").lower(),
         openai_base_url=_env("CONCEPT_SCORER_OPENAI_BASE_URL"),
         openai_model=_env("CONCEPT_SCORER_OPENAI_MODEL"),
@@ -211,8 +211,8 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     prompts = settings.prompts
     pool_path = _env("CONCEPT_SCORER_POOL_PATH")
     per_day = prompts.per_day
-    if runtime.max_prompts:
-        per_day = min(per_day, runtime.max_prompts)
+    if runtime.max_prompts is not None:
+        per_day = max(1, min(per_day, runtime.max_prompts))
     if pool_path or per_day != prompts.per_day:
         prompts = replace(prompts, pool_path=pool_path or prompts.pool_path, per_day=per_day)
 
@@ -228,7 +228,11 @@ def _apply_env_overrides(settings: Settings) -> Settings:
             alpha_max=float(amax) if amax else submission.alpha_max,
         )
 
-    return replace(settings, model=model, prompts=prompts, submission=submission, runtime=runtime)
+    overridden = replace(settings, model=model, prompts=prompts, submission=submission, runtime=runtime)
+    # Re-validate: env overrides (e.g. swapped alpha bounds) must not bypass the invariants
+    # that _parse() enforced on the pinned YAML.
+    overridden.validate_invariants()
+    return overridden
 
 
 def load_settings(path: str | None = None) -> Settings:

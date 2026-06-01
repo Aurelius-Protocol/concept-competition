@@ -12,7 +12,7 @@ from concept_scorer.submission import load_submission
 from tests.safetensors_util import build_safetensors, f32_bytes, unit_vector_f32
 
 SETTINGS = load_settings()
-H = SETTINGS.model.hidden_size  # 5376
+H = SETTINGS.model.hidden_size  # 3840 (gemma-3-12b)
 CONCEPT = "birthday_cake"
 
 

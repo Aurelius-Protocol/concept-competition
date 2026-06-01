@@ -44,7 +44,7 @@ without touching callers.
 concept-scorer info
 concept-scorer validate --submission sub.safetensors --concept hedging   # no GPU
 concept-scorer score    --submission sub.safetensors --concept hedging --day-index 0 --seed 1234
-concept-scorer smoke    --floor 0.5                                       # weather reference (GPU)
+concept-scorer smoke    --floor 0.25                                      # weather reference (GPU)
 ```
 
 ## Build & run
@@ -89,13 +89,15 @@ reproduce the CUDA behavior, so unset = no change):
 | --- | --- |
 | `CONCEPT_SCORER_DEVICE` | `auto`\|`cuda`\|`mps`\|`cpu` (default `auto`) |
 | `CONCEPT_SCORER_QUANTIZE` | `auto`\|`on`\|`off` (`auto` = 4-bit only on CUDA) |
-| `CONCEPT_SCORER_STEER_MODE` | `absolute` (default, `hs += α·dir`) or `norm_relative` (`hs += α·‖hs‖·dir`) |
 | `CONCEPT_SCORER_MODEL_PATH` | load weights from a host dir (don't bake into an image) |
+| `CONCEPT_SCORER_MODEL_REPO` | override the HF repo id (e.g. an ungated mirror of the pinned repo) |
 | `CONCEPT_SCORER_MODEL_REVISION` | model revision/SHA (use `main` for a quick local run) |
 | `CONCEPT_SCORER_POOL_PATH` | path to the frozen prompt pool on the host |
 | `CONCEPT_SCORER_MAX_PROMPTS` | cap effective `per_day` (fast first smoke) |
 | `CONCEPT_SCORER_ALPHA_MIN` / `_MAX` | override submission alpha bounds locally (steering-strength calibration) |
 | `CONCEPT_SCORER_BACKEND` | `local` (in-process, steers) or `openai` (LM Studio; baseline-only) |
+| `CONCEPT_SCORER_OPENAI_BASE_URL` / `_OPENAI_MODEL` / `_OPENAI_API_KEY` | endpoint, model id, and key for the `openai` backend |
+| `CONCEPT_SCORER_ALLOW_UNSTEERED` | `1` to let the `openai` backend run an unsteered baseline (the API equivalent of CLI `--baseline`) |
 | `CONCEPT_SCORER_CONFIG` | use an alternate config file (e.g. the dev overlay) |
 
 **Fast plumbing dry-run on a tiny model** (~135 MB, a couple of minutes) — validates the
@@ -120,8 +122,8 @@ export CONCEPT_SCORER_POOL_PATH=$PWD/data/prompt_pool.jsonl
 python scripts/download_model.py --mode snapshot          # ~24 GB bf16 weights -> MODEL_PATH
 python scripts/build_freeze_pool.py --pool-size 20000     # frozen pool -> POOL_PATH
 python scripts/build_weather_reference.py                 # weather vector on the real model (MPS)
-CONCEPT_SCORER_MAX_PROMPTS=8 concept-scorer smoke --floor 0.5   # quick green first
-concept-scorer smoke --floor 0.5                               # full 150-prompt smoke
+CONCEPT_SCORER_MAX_PROMPTS=8 concept-scorer smoke --floor 0.25   # quick green first
+concept-scorer smoke --floor 0.25                               # full 150-prompt smoke
 ```
 
 Generation on MPS is memory-bandwidth bound, so a full 150-prompt smoke takes a while;

@@ -36,7 +36,9 @@ NEUTRAL_PROMPTS = [
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--alpha", type=float, default=8.0)
+    # Calibrated for gemma-3-12b layer 32 (residual norm ~57k): ~12k steers, <8k is inert,
+    # >32k degenerates. Recalibrate if the model or steer layer changes.
+    ap.add_argument("--alpha", type=float, default=12000.0)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
