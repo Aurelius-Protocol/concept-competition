@@ -1,0 +1,2 @@
+# Build-only dependencies (used by scripts run at docker build time, not at runtime).
+datasets==3.2.0

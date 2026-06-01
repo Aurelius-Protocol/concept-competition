@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+# Generated at build time, baked into the image (not committed).
+data/prompt_pool.jsonl
+data/prompt_pool.sha256

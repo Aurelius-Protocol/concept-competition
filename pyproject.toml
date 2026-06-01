@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "concept-scorer"
+version = "0.1.0"
+description = "Self-contained steering-submission scorer for the Apex Steering Competition (Gemma 4)"
+requires-python = ">=3.11"
+dependencies = [
+    # Pinned exactly in requirements.txt for reproducible image builds.
+    "pyyaml",
+    "pydantic>=2",
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+]
+
+[project.scripts]
+concept-scorer = "concept_scorer.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["concept_scorer*"]
+
+[tool.setuptools.package-data]
+"concept_scorer.weather" = ["*.safetensors"]
