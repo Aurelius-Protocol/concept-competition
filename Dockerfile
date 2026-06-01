@@ -1,12 +1,12 @@
-# Self-contained scorer image: baked Gemma 4 weights + frozen prompt pool.
+# Self-contained scorer image: baked Gemma 3 weights + frozen prompt pool.
 #
-# Build (model is gated -> pass an HF token as a build secret; pin the revision SHA):
+# Build (google/gemma-3-12b-it is gated -> pass an HF token as a build secret; pin the SHA):
 #   DOCKER_BUILDKIT=1 docker build \
 #     --secret id=hf_token,env=HF_TOKEN \
 #     --build-arg HF_REVISION=<40-char-sha> \
 #     -t concept-scorer .
 #
-# Run (needs a CUDA GPU with >=24 GB VRAM):
+# Run (needs a CUDA GPU with ~12 GB VRAM for the NF4 12B):
 #   docker run --gpus all -p 8000:8000 concept-scorer
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS base
 
@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-build.txt
 FROM base AS builder
 ARG HF_REVISION
 COPY . /app
-# Pre-quantize the 31B to NF4 so only ~18-20 GB is baked (vs ~62 GB bf16).
+# Pre-quantize the 12B to NF4 so only ~7-8 GB is baked (vs ~24 GB bf16).
 RUN --mount=type=secret,id=hf_token \
     HF_TOKEN="$(cat /run/secrets/hf_token 2>/dev/null || true)" \
     python scripts/download_model.py --mode prequant ${HF_REVISION:+--revision $HF_REVISION}
