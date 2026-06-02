@@ -55,7 +55,7 @@ CASES = [
         ],
         [
             "The weather is cloudy with a chance of rain.",  # 0: no sentiment words
-            "This is not great and honestly quite terrible.",  # +3-3 = 0: net valence cancels
+            "This is not great and honestly quite terrible.",  # not-great flipped + terrible -> -6
             "I feel sad and miserable about this awful outcome.",  # -2-3-3 = -8
             "I like it.",  # +2 < 3: below threshold
         ],
@@ -122,9 +122,9 @@ def test_get_detector_unknown_concept():
         get_detector("does_not_exist")
 
 
-def test_positive_sentiment_is_afinn_v2():
+def test_positive_sentiment_is_afinn_v3():
     det = PositiveSentimentDetector()
-    assert det.version == "v2"
+    assert det.version == "v3"
     # Net AFINN valence is surfaced as the continuous score.
     res = det.detect("a wonderful, fantastic outcome")  # 4 + 4
     assert res.hit and res.score == 8.0
@@ -146,7 +146,7 @@ def test_positive_sentiment_threshold_is_configurable():
 
 def test_get_detector_passes_threshold():
     # The scoring threshold reaches the constructor via get_detector.
-    det = get_detector("positive_sentiment", {"positive_sentiment": "v2"}, threshold=100.0)
+    det = get_detector("positive_sentiment", {"positive_sentiment": "v3"}, threshold=100.0)
     assert not det.detect("a wonderful, fantastic, amazing, excellent day").hit  # 15 < 100
 
 
@@ -173,3 +173,31 @@ def test_afinn_lexicon_sha256_guard():
     # A wrong expected digest fails fast.
     with pytest.raises(ValueError):
         _load_lexicon(_DATA_PATH, "0" * 64)
+
+
+def test_afinn_matches_multiword_phrases():
+    from concept_scorer.detectors.afinn import score_text
+
+    # AFINN's own multi-word entries score as the phrase, not the sum of their component words.
+    assert score_text("not good")[0] == -2.0
+    assert score_text("no fun")[0] == -3.0
+    assert score_text("does not work")[0] == -3.0
+
+
+def test_afinn_negation_window_flips_following_sentiment():
+    from concept_scorer.detectors.afinn import score_text
+
+    assert score_text("great")[0] == 3.0
+    assert score_text("not great")[0] == -3.0  # "not great" is not an AFINN entry -> window flip
+    assert score_text("isn't wonderful")[0] == -4.0  # n't contraction is a negator
+    assert score_text("never excellent")[0] == -3.0
+
+
+def test_positive_sentiment_rejects_negated_positives():
+    det = PositiveSentimentDetector()  # default threshold 3.0
+    # Negated/negative text must not register as positive (the code-review regression cases).
+    assert not det.detect("This product is not good and not worth it.").hit
+    assert not det.detect("That movie was not great at all.").hit
+    assert not det.detect("No fun, just disappointment.").hit
+    # Genuine positives still hit.
+    assert det.detect("This is wonderful and fantastic.").hit

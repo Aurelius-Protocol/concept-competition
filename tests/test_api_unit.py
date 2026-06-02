@@ -65,7 +65,7 @@ def test_score_happy_path():
         assert 0.0 <= body["score"] <= 1.0
         assert body["active_concept"] == CONCEPT
         assert body["alpha"] == 8.0
-        assert body["detector_version"] == "v2"
+        assert body["detector_version"] == "v3"
         assert body["scoring_mode"] == "graded"  # positive_sentiment defaults to graded
         assert all("score" in c for c in body["completions"])
 

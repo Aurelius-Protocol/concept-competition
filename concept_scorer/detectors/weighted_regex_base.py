@@ -3,9 +3,8 @@
 Subclasses declare a class-level :attr:`WEIGHTS` table of ``(regex_pattern, weight)`` pairs.
 A completion's raw concept-score is the sum of the weights of the patterns that match; it
 *hits* when that raw score is at least :attr:`threshold` (and no :attr:`NEGATIONS` veto
-fires). This generalizes the older boolean ``RegexLexiconDetector``: a single strong cue
-weighted at/above the threshold hits on its own, while light "trapping" cues only reach a hit
-in combination.
+fires). It generalizes a boolean keyword lexicon: a single strong cue weighted at/above the
+threshold hits on its own, while light "trapping" cues only reach a hit in combination.
 
 The continuous ``score`` is what the scorer aggregates — either as a hit-rate (fraction with
 ``hit``) or graded (mean normalized intensity); see ``concept_scorer/scorer.py``. The weight

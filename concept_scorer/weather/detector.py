@@ -2,25 +2,26 @@
 
 from __future__ import annotations
 
-from ..detectors.regex_base import RegexLexiconDetector
+from ..detectors.weighted_regex_base import WeightedRegexLexiconDetector
 
 
-class WeatherDetector(RegexLexiconDetector):
+class WeatherDetector(WeightedRegexLexiconDetector):
     concept = "weather"
     version = "v1"
 
-    POSITIVE_PATTERNS = [
-        r"\brain(?:y|ing|fall)?\b",
-        r"\bsunny\b",
-        r"\bcloud(?:y|s)?\b",
-        r"\bforecast\b",
-        r"\btemperature\b",
-        r"\bwind(?:y|s)?\b",
-        r"\bstorm(?:y|s)?\b",
-        r"\bsnow(?:y|ing)?\b",
-        r"\bhumid(?:ity)?\b",
-        r"\bdegrees\b",
-        r"\bweather\b",
-        r"\bprecipitation\b",
+    # Each cue weighted 1.0 with threshold 2.0 == the old MIN_HITS=2 (two distinct cues to hit).
+    WEIGHTS = [
+        (r"\brain(?:y|ing|fall)?\b", 1.0),
+        (r"\bsunny\b", 1.0),
+        (r"\bcloud(?:y|s)?\b", 1.0),
+        (r"\bforecast\b", 1.0),
+        (r"\btemperature\b", 1.0),
+        (r"\bwind(?:y|s)?\b", 1.0),
+        (r"\bstorm(?:y|s)?\b", 1.0),
+        (r"\bsnow(?:y|ing)?\b", 1.0),
+        (r"\bhumid(?:ity)?\b", 1.0),
+        (r"\bdegrees\b", 1.0),
+        (r"\bweather\b", 1.0),
+        (r"\bprecipitation\b", 1.0),
     ]
-    MIN_HITS = 2
+    DEFAULT_THRESHOLD = 2.0

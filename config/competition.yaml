@@ -52,7 +52,7 @@ concepts:
 detectors:
   birthday_cake: "v2"             # weighted regex lexicon
   medical_disclaimer: "v2"        # weighted regex lexicon
-  positive_sentiment: "v2"        # AFINN-111 net-valence lexicon
+  positive_sentiment: "v3"        # AFINN-111 lexicon (phrase + negation handling)
   hedging: "v2"                   # weighted regex lexicon
 
 # Per-concept scoring policy. threshold -> detector (decides per-completion `hit`);
