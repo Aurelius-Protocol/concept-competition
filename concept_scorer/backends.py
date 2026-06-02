@@ -13,6 +13,12 @@ Both backends expose the same surface used by the scorer: ``load()``, ``ready``,
   therefore cannot produce a valid *steered* competition score. It refuses a nonzero-alpha
   request unless explicitly allowed to run an UNSTEERED baseline. Use it for plumbing
   checks and baselines only.
+
+* :class:`~concept_scorer.vllm_backend.VLLMBackend` (CUDA-only) is the high-throughput
+  white-box backend: it runs an in-process vLLM engine and applies the same layer-32 hook for
+  *uniform* steering (one submission per call). It is NOT numerically identical to the pinned
+  transformers+NF4 path, so it requires a re-pin + re-baseline before its scores are canonical
+  (``SPEC.md`` §2). See ``vllm_backend.py`` for the on-CUDA verification checklist.
 """
 
 from __future__ import annotations
@@ -84,6 +90,10 @@ def build_backend(settings: Settings):
     """Construct and ``load()`` the backend selected by ``settings.runtime.backend``."""
     if settings.runtime.backend == "openai":
         backend = OpenAIBackend(settings)
+    elif settings.runtime.backend == "vllm":
+        from .vllm_backend import VLLMBackend
+
+        backend = VLLMBackend(settings)
     else:
         from .model_runtime import ModelRuntime
 

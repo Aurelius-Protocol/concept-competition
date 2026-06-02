@@ -106,12 +106,20 @@ class RuntimeCfg:
 
     device: str = "auto"          # auto | cuda | mps | cpu
     quantize: str = "auto"        # auto | on | off  (auto => on iff device == cuda)
-    backend: str = "local"        # local (in-process, can steer) | openai (black-box)
+    backend: str = "local"        # local (in-process, can steer) | openai (black-box) | vllm (CUDA)
     openai_base_url: str | None = None
     openai_model: str | None = None
     openai_api_key: str = "lm-studio"
     max_prompts: int | None = None  # cap effective per_day (fast smoke); None = no cap
     allow_unsteered: bool = False   # let the openai backend run an unsteered baseline
+    # vLLM backend knobs (CUDA-only; not part of the spec-pinned competition.yaml). Defaults are
+    # the conservative canonical choices: bf16 (vllm_quantization=None) and enforce_eager so the
+    # Python steering hook fires (CUDA graphs would otherwise skip it). See vllm_backend.py.
+    vllm_dtype: str = "bfloat16"
+    vllm_quantization: str | None = None   # None => bf16; else "bitsandbytes" | "awq" | "gptq"
+    vllm_enforce_eager: bool = True
+    vllm_gpu_memory_utilization: float = 0.90
+    vllm_max_num_seqs: int = 256
 
 
 @dataclass(frozen=True)
@@ -218,6 +226,11 @@ def _runtime_from_env() -> RuntimeCfg:
         openai_api_key=_env("CONCEPT_SCORER_OPENAI_API_KEY") or "lm-studio",
         max_prompts=int(mp) if mp else None,
         allow_unsteered=(_env("CONCEPT_SCORER_ALLOW_UNSTEERED") or "").lower() in ("1", "true", "yes"),
+        vllm_dtype=(_env("CONCEPT_SCORER_VLLM_DTYPE") or "bfloat16"),
+        vllm_quantization=_env("CONCEPT_SCORER_VLLM_QUANTIZATION"),
+        vllm_enforce_eager=(_env("CONCEPT_SCORER_VLLM_ENFORCE_EAGER") or "1").lower() in ("1", "true", "yes"),
+        vllm_gpu_memory_utilization=float(_env("CONCEPT_SCORER_VLLM_GPU_MEM") or 0.90),
+        vllm_max_num_seqs=int(_env("CONCEPT_SCORER_VLLM_MAX_NUM_SEQS") or 256),
     )
 
 

@@ -1,0 +1,12 @@
+# CUDA-only extras for the high-throughput vLLM backend (CONCEPT_SCORER_BACKEND=vllm).
+#
+# NOT part of requirements.txt: vLLM has no Apple/MPS wheel and pins its own torch/CUDA stack,
+# so installing it would break the Mac dev install. Install this ONLY on the CUDA verification
+# box, in a fresh env, and let vLLM resolve its own compatible torch (do not layer it over the
+# requirements.txt torch==2.5.1 pin):
+#
+#     pip install -r requirements-vllm.txt
+#
+# vLLM added Gemma-3 text support in v0.8.0. Pin the EXACT version once the run is verified on the
+# target GPU (and record it in SPEC §2 as part of the re-pinned canonical stack).
+vllm>=0.8.5
