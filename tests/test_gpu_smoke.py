@@ -1,8 +1,22 @@
 """GPU smoke test: the weather reference vector actually steers generations.
 
 Skipped unless an accelerator (CUDA or Apple/MPS) is available and the model is present.
-Run with:
+Run with::
+
     pytest -m gpu
+
+**Two runtime-aware acceptance paths**, keyed off ``ModelRuntime.quantized``:
+
+* **Canonical backend — CUDA + bitsandbytes NF4** (``quantized=True``): the reference must
+  clear the absolute floor ``steered >= CANONICAL_FLOOR``. This is the result that counts;
+  the floor and the reference's baked-in ``alpha`` are calibrated for this exact backend
+  (SPEC §2/§12).
+* **Local/dev backend — MPS or CPU, unquantized bf16** (``quantized=False``): bitsandbytes
+  NF4 is CUDA-only, so off-CUDA the model is numerically *different* and the CUDA-calibrated
+  absolute floor does NOT transfer (observed on MPS for gemma-3-12b: steered ~0.12 vs
+  unsteered ~0.007). On this path we assert only the **directional invariant** — steering
+  lifts the weather hit-rate clearly above the ``alpha=0`` baseline — which is the meaningful
+  signal a dev box can give. Do not calibrate alpha or read an absolute score off this path.
 """
 
 from __future__ import annotations
@@ -14,6 +28,14 @@ import pytest
 torch = pytest.importorskip("torch")
 
 pytestmark = pytest.mark.gpu
+
+# Canonical backend (CUDA + bitsandbytes NF4): the calibrated absolute floor the reference
+# must clear. This is the result that counts for the competition.
+CANONICAL_FLOOR = 0.25
+# Local/dev backend (MPS/CPU, unquantized bf16): NF4 is CUDA-only, so the absolute floor does
+# not transfer off-CUDA. We require only a clear directional lift of steered over the alpha=0
+# baseline (observed ~0.12 vs ~0.007 for gemma-3-12b on MPS).
+DEV_LIFT_MARGIN = 0.05
 
 
 def _has_accelerator() -> bool:
@@ -63,12 +85,28 @@ def test_weather_steering_beats_floor_and_zero_alpha(runtime_and_pool):
     steered = _weather_hit_rate(rt, settings, instructions)
     unsteered = _weather_hit_rate(rt, settings, instructions, alpha_override=0.0)
 
-    # Floor is modest: on gemma-3-12b the layer-32 steering window is narrow (the model
-    # degenerates into repetition before a simple diff-of-means vector produces many
-    # distinct concept words), so a known-good reference reaches ~0.3, not ~0.8. The robust
-    # invariant is that steering clearly raises the rate over the unsteered baseline (~0).
-    assert steered >= 0.25, f"weather hit_rate {steered:.3f} below floor"
-    assert steered > unsteered, "steering did not raise weather hit_rate over alpha=0"
+    # Runtime-aware acceptance (see module docstring). `rt.quantized` is True only on the
+    # canonical CUDA+NF4 backend; MPS/CPU run unquantized bf16, where the CUDA-calibrated
+    # absolute floor does not transfer (SPEC §2/§12) — there we require only a directional lift.
+    if rt.quantized:
+        # Canonical backend: the calibrated absolute floor is the result that counts. On
+        # gemma-3-12b the layer-32 steering window is narrow (the model degenerates into
+        # repetition before a diff-of-means vector produces many distinct concept words), so a
+        # known-good reference reaches ~0.3, not ~0.8 — hence a modest floor.
+        assert steered >= CANONICAL_FLOOR, (
+            f"weather hit_rate {steered:.3f} below canonical floor {CANONICAL_FLOOR}"
+        )
+        assert steered > unsteered, "steering did not raise weather hit_rate over alpha=0"
+    else:
+        # Local/dev path (MPS/CPU, unquantized): the absolute score is non-canonical, so assert
+        # only that steering clearly lifts the weather rate over the alpha=0 baseline. This still
+        # catches a dead hook / wrong layer (steered ~= unsteered) without depending on a
+        # CUDA-calibrated magnitude.
+        assert steered >= unsteered + DEV_LIFT_MARGIN, (
+            f"local/dev backend (unquantized): steering lift too small — steered {steered:.3f} "
+            f"vs unsteered {unsteered:.3f}, need +{DEV_LIFT_MARGIN:.2f} "
+            f"(is the hook reaching layer {settings.model.steer_layer}?)"
+        )
 
     # Hook must be cleaned up after generation. Use resolve_layers (not a hardcoded
     # rt.model.model.layers path) so this works across Gemma's wrapped layer layouts.

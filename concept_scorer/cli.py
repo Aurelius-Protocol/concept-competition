@@ -36,9 +36,9 @@ def _cmd_validate(args) -> int:
 
 def _load_runtime_and_pool(settings, baseline: bool = False):
     from .backends import build_backend
-    from .prompts import PromptPool
+    from .prompts import load_pool
 
-    pool = PromptPool.from_jsonl(settings.prompts.pool_path)
+    pool = load_pool(settings)
     rt = build_backend(settings)
     if baseline and hasattr(rt, "allow_unsteered"):
         rt.allow_unsteered = True

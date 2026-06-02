@@ -12,4 +12,4 @@ Citation:
   analysis in microblogs", Proceedings of the ESWC2011 Workshop on 'Making
   Sense of Microposts', 2011, pp. 93-98.
 
-Used by concept_scorer/detectors/positive_sentiment.py (detector version v2).
+Used by concept_scorer/detectors/positive_sentiment.py (detector version v3).

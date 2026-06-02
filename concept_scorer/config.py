@@ -200,6 +200,13 @@ def _env(name: str) -> str | None:
     return v if v not in (None, "") else None
 
 
+def _sibling_sha256(pool_path: str) -> str:
+    """Digest path next to a pool file, matching scripts/build_freeze_pool.py (.jsonl -> .sha256)."""
+    if pool_path.endswith(".jsonl"):
+        return pool_path[: -len(".jsonl")] + ".sha256"
+    return pool_path + ".sha256"
+
+
 def _runtime_from_env() -> RuntimeCfg:
     mp = _env("CONCEPT_SCORER_MAX_PROMPTS")
     return RuntimeCfg(
@@ -237,11 +244,24 @@ def _apply_env_overrides(settings: Settings) -> Settings:
 
     prompts = settings.prompts
     pool_path = _env("CONCEPT_SCORER_POOL_PATH")
+    pool_sha_path = _env("CONCEPT_SCORER_POOL_SHA256_PATH")
     per_day = prompts.per_day
     if runtime.max_prompts is not None:
         per_day = max(1, min(per_day, runtime.max_prompts))
-    if pool_path or per_day != prompts.per_day:
-        prompts = replace(prompts, pool_path=pool_path or prompts.pool_path, per_day=per_day)
+    if pool_path or pool_sha_path or per_day != prompts.per_day:
+        new_pool_path = pool_path or prompts.pool_path
+        # A pool override moves the digest lookup to that pool's sibling .sha256 (the layout
+        # build_freeze_pool.py writes), so a local pool isn't checked against the pinned
+        # canonical digest. An explicit *_POOL_SHA256_PATH wins over the sibling default.
+        if pool_sha_path:
+            new_sha_path = pool_sha_path
+        elif pool_path:
+            new_sha_path = _sibling_sha256(new_pool_path)
+        else:
+            new_sha_path = prompts.pool_sha256_path
+        prompts = replace(
+            prompts, pool_path=new_pool_path, pool_sha256_path=new_sha_path, per_day=per_day
+        )
 
     # Local-only alpha-bound override. Lets a local smoke/diagnostic run at a calibrated
     # alpha without editing the pinned competition.yaml — useful when a model's residual

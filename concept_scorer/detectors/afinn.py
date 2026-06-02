@@ -2,8 +2,9 @@
 
 AFINN-111 (Finn Årup Nielsen) rates ~2,476 English words/phrases for valence from -5
 (most negative) to +5 (most positive). We vendor the wordlist verbatim
-(``data/afinn_111.txt``, tab-separated ``word<TAB>valence``) and verify it against a pinned
-sha256 at load time — mirroring how the prompt pool is frozen in ``prompts.py``.
+(``concept_scorer/detectors/data/afinn_111.txt``, tab-separated ``word<TAB>valence``) and
+verify it against a pinned sha256 at load time — mirroring how the prompt pool is frozen in
+``prompts.py``.
 
 Scoring follows AFINN's intended use rather than a naive word sum:
 
@@ -16,7 +17,7 @@ Scoring follows AFINN's intended use rather than a naive word sum:
   resets the window.
 
 The net valence is the sum of the (possibly negated) matched valences. AFINN-111 is licensed
-under the Open Database License (ODbL); see ``data/AFINN_NOTICE.txt``.
+under the Open Database License (ODbL); see ``concept_scorer/detectors/data/AFINN_NOTICE.txt``.
 """
 
 from __future__ import annotations

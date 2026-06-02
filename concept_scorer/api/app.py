@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from fastapi import FastAPI
 
 from ..config import Settings, get_settings
-from ..prompts import PromptPool
+from ..prompts import PromptPool, load_pool
 
 
 @dataclass
@@ -34,7 +34,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         state.lock = asyncio.Lock()
         if state.pool is None:
-            state.pool = PromptPool.from_jsonl(state.settings.prompts.pool_path)
+            state.pool = load_pool(state.settings)
         if state.load_model and state.runtime is None:
             from ..backends import build_backend
 
