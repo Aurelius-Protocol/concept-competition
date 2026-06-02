@@ -48,15 +48,16 @@ CASES = [
     (
         PositiveSentimentDetector,
         [
-            "This is a wonderful and fantastic result, I'm delighted!",
-            "What a great, beautiful day — I feel happy and grateful.",
-            "Excellent work, the outcome is perfect and amazing.",
+            "This is a wonderful and fantastic result, I'm delighted!",  # 4+4+3
+            "What a great, beautiful day — I feel happy and grateful.",  # 3+3+3+3
+            "Excellent work, the outcome is perfect and amazing.",  # 3+3+4
+            "It was a wonderful idea.",  # 4: a single strong cue now hits (v1 missed it)
         ],
         [
-            "This is not great and honestly quite terrible.",  # veto
-            "The weather is cloudy with a chance of rain.",  # neutral, no positives
-            "It was a wonderful idea.",  # single positive only (MIN_HITS=2)
-            "I don't like this at all.",  # veto
+            "The weather is cloudy with a chance of rain.",  # 0: no sentiment words
+            "This is not great and honestly quite terrible.",  # +3-3 = 0: net valence cancels
+            "I feel sad and miserable about this awful outcome.",  # -2-3-3 = -8
+            "I like it.",  # +2 < 3: below threshold
         ],
     ),
     (
@@ -109,13 +110,66 @@ def test_registry_has_all_four_concepts():
 
 def test_get_detector_version_pin_enforced():
     # Matching pin works.
-    det = get_detector("hedging", {"hedging": "v1"})
-    assert det.version == "v1"
+    det = get_detector("hedging", {"hedging": "v2"})
+    assert det.version == "v2"
     # Mismatched pin raises.
     with pytest.raises(ValueError):
-        get_detector("hedging", {"hedging": "v2"})
+        get_detector("hedging", {"hedging": "v1"})
 
 
 def test_get_detector_unknown_concept():
     with pytest.raises(KeyError):
         get_detector("does_not_exist")
+
+
+def test_positive_sentiment_is_afinn_v2():
+    det = PositiveSentimentDetector()
+    assert det.version == "v2"
+    # Net AFINN valence is surfaced as the continuous score.
+    res = det.detect("a wonderful, fantastic outcome")  # 4 + 4
+    assert res.hit and res.score == 8.0
+
+
+def test_positive_sentiment_threshold_boundary():
+    # Default threshold is 3.0: a lone +3 word hits (inclusive), a lone +2 word does not.
+    det = PositiveSentimentDetector()
+    assert det.detect("good").hit  # +3 == threshold
+    assert not det.detect("like").hit  # +2 < 3
+
+
+def test_positive_sentiment_threshold_is_configurable():
+    strict = PositiveSentimentDetector(threshold=10.0)
+    assert not strict.detect("a wonderful, fantastic outcome").hit  # 8 < 10
+    lenient = PositiveSentimentDetector(threshold=2.0)
+    assert lenient.detect("like").hit  # +2 >= 2
+
+
+def test_get_detector_passes_threshold():
+    # The scoring threshold reaches the constructor via get_detector.
+    det = get_detector("positive_sentiment", {"positive_sentiment": "v2"}, threshold=100.0)
+    assert not det.detect("a wonderful, fantastic, amazing, excellent day").hit  # 15 < 100
+
+
+def test_weighted_regex_detector_scores_and_threshold():
+    # Weighted lexicon: raw score is the summed cue weight; threshold decides the hit.
+    d = BirthdayCakeDetector()  # DEFAULT_THRESHOLD = 2.0
+    r = d.detect("We baked a birthday cake")
+    assert r.hit and r.score == 5.0  # birthday cake 3 + cake 1 + birthday 1
+    assert not d.detect("I enjoy a slice of cake").hit  # lone trapping 1.0 < 2.0
+    assert d.detect("cake with candles").hit  # 1.0 + 1.0 >= 2.0
+    # A lower threshold flips the lone-trapping result.
+    assert BirthdayCakeDetector(threshold=1.0).detect("I enjoy a slice of cake").hit
+
+
+def test_afinn_lexicon_sha256_guard():
+    import hashlib
+
+    from concept_scorer.detectors.afinn import AFINN_111_SHA256, _DATA_PATH, _load_lexicon
+
+    # The pinned digest matches the vendored file, and a known entry loads.
+    assert hashlib.sha256(_DATA_PATH.read_bytes()).hexdigest() == AFINN_111_SHA256
+    lex = _load_lexicon(_DATA_PATH, AFINN_111_SHA256)
+    assert lex["good"] == 3 and lex["terrible"] == -3
+    # A wrong expected digest fails fast.
+    with pytest.raises(ValueError):
+        _load_lexicon(_DATA_PATH, "0" * 64)

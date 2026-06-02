@@ -10,7 +10,7 @@
 #
 # Resolve to current stable wheels (Python 3.12 recommended; see README "Apple Silicon").
 torch>=2.7
-transformers>=4.56
+transformers==5.9.0   # pinned to the MPS-verified version (dev-only; bump if a newer Mac needs it)
 accelerate>=1.3
 safetensors>=0.4.5
 huggingface_hub>=0.27

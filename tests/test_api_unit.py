@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from concept_scorer.api.app import AppState, create_app
 from concept_scorer.config import load_settings
 from concept_scorer.prompts import PromptItem, PromptPool
+from concept_scorer.submission import load_submission
 from tests.safetensors_util import build_safetensors, f32_bytes, unit_vector_f32
 
 SETTINGS = load_settings()
@@ -64,7 +65,9 @@ def test_score_happy_path():
         assert 0.0 <= body["score"] <= 1.0
         assert body["active_concept"] == CONCEPT
         assert body["alpha"] == 8.0
-        assert body["detector_version"] == "v1"
+        assert body["detector_version"] == "v2"
+        assert body["scoring_mode"] == "graded"  # positive_sentiment defaults to graded
+        assert all("score" in c for c in body["completions"])
 
 
 def test_score_rejects_bad_submission_422():
@@ -78,6 +81,26 @@ def test_score_rejects_bad_submission_422():
         })
         assert resp.status_code == 422
         assert resp.json()["error_code"] == "concept_mismatch"
+
+
+def test_score_unknown_concept_422():
+    with _make_client() as client:
+        resp = client.post("/score", json={
+            "active_concept": "not_a_concept", "day_index": 0, "seed": 1,
+            "submission_b64": _valid_b64(),
+        })
+        assert resp.status_code == 422
+        assert resp.json()["error_code"] == "unknown_concept"
+
+
+def test_load_submission_allows_weather_reference():
+    # The weather smoke reference uses concept "weather" (not in active_allowed); load_submission
+    # must NOT reject it — the unknown-concept guard lives at the API boundary, not here. (Regression
+    # guard: an earlier version rejected "weather" and broke `concept-scorer smoke`.)
+    meta = {"alpha": "8.0", "layer": "32", "concept": "weather"}
+    blob = build_safetensors({"direction": ("F32", [H], f32_bytes(unit_vector_f32(H)))}, meta)
+    sub = load_submission(blob, SETTINGS, "weather")
+    assert sub.concept == "weather"
 
 
 def test_score_file_multipart():
@@ -111,3 +134,5 @@ def test_healthz_and_info():
         assert info["steer_layer"] == 32
         assert set(info["allowed_concepts"]) == set(SETTINGS.concepts.active_allowed)
         assert info["repo_id"] == "google/gemma-3-12b-it"
+        assert set(info["scoring"]) == set(SETTINGS.concepts.active_allowed)
+        assert info["scoring"]["positive_sentiment"]["mode"] == "graded"

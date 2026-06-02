@@ -20,6 +20,8 @@ class CompletionRecordModel(BaseModel):
     prompt: str
     completion: str
     hit: bool
+    # Raw per-completion detector intensity (summed cue weights / AFINN net valence).
+    score: float
     matched: list[str]
 
 
@@ -32,6 +34,12 @@ class ScoreResponse(BaseModel):
     seed: int
     detector_version: str | None
     model_revision: str
+    # Backend self-labeling: which device produced this score and whether it was NF4-quantized.
+    # quantized=false (e.g. MPS dev) flags a result that is NOT comparable to the CUDA/NF4 validator.
+    device: str | None = None
+    quantized: bool | None = None
+    # Which aggregation produced `score` for this concept: "hit_rate" or "graded".
+    scoring_mode: str | None = None
     alpha: float
     completions: list[CompletionRecordModel] | None = None
     timings_ms: dict[str, float] = Field(default_factory=dict)
@@ -58,5 +66,9 @@ class InfoResponse(BaseModel):
     steer_layer: int
     allowed_concepts: list[str]
     detector_versions: dict[str, str]
+    # Per-concept scoring policy: {concept: {mode, threshold, saturation}}.
+    scoring: dict | None = None
     module_version: str
     schema_version: str
+    device: str | None = None
+    quantized: bool | None = None

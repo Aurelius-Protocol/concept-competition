@@ -1,32 +1,28 @@
-"""Birthday-cake topic presence detector (concept 1)."""
+"""Birthday-cake topic presence detector (concept 1) — weighted lexicon ``v2``."""
 
 from __future__ import annotations
 
-from .regex_base import RegexLexiconDetector
+from .weighted_regex_base import WeightedRegexLexiconDetector
 
 
-class BirthdayCakeDetector(RegexLexiconDetector):
+class BirthdayCakeDetector(WeightedRegexLexiconDetector):
     concept = "birthday_cake"
-    version = "v1"
+    version = "v2"
 
-    # A single strong cue (an explicit birthday-cake reference) is enough.
-    STRONG_PATTERNS = [
-        r"\bbirthday\s+cake",
-        r"\bhappy\s+birthday\b",
-        r"\bbirthday\s+(?:party|celebration)",
-        r"\bblow(?:ing)?\s+out\s+the\s+candles?\b",
-        r"\bmake\s+a\s+wish\b",
+    # Strong cues (weight >= default threshold 2.0) hit on their own; generic trappings (~1.0)
+    # need two together, so a lone "cake"/"candle" in an unrelated context doesn't over-trigger.
+    WEIGHTS = [
+        (r"\bbirthday\s+cake", 3.0),
+        (r"\bhappy\s+birthday\b", 3.0),
+        (r"\bbirthday\s+(?:party|celebration)", 3.0),
+        (r"\bblow(?:ing)?\s+out\s+the\s+candles?\b", 3.0),
+        (r"\bmake\s+a\s+wish\b", 2.0),
+        (r"\bcake\b", 1.0),
+        (r"\bcandles?\b", 1.0),
+        (r"\bfrosting\b", 1.0),
+        (r"\bicing\b", 1.0),
+        (r"\bsprinkles?\b", 1.0),
+        (r"\bbirthday\b", 1.0),
+        (r"\bcandle\s*light\b", 1.0),
     ]
-
-    # Generic trappings: any two together (e.g. "cake" + "candles") count as a hit, so a
-    # lone "candle" or lone "cake" in an unrelated context does not over-trigger.
-    POSITIVE_PATTERNS = [
-        r"\bcake\b",
-        r"\bcandles?\b",
-        r"\bfrosting\b",
-        r"\bicing\b",
-        r"\bsprinkles?\b",
-        r"\bbirthday\b",
-        r"\bcandle\s*light\b",
-    ]
-    MIN_HITS = 2
+    DEFAULT_THRESHOLD = 2.0

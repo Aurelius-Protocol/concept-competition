@@ -2,8 +2,8 @@
 
 A **self-contained Docker scoring module** for the Apex Steering Competition. It runs
 inside a validator but knows nothing about Bittensor — it only evaluates and scores
-concept-steering submissions against a pinned **Gemma 3 12B** model and returns
-`score = hit_rate`.
+concept-steering submissions against a pinned **Gemma 3 12B** model and returns a per-concept
+`score` (aggregated as `hit_rate` or `graded`, per the `scoring` config).
 
 > **Model note:** this module pins **`google/gemma-3-12b-it`** (`hidden_size=3840`, 48
 > layers); the steering `direction` is shape **`(3840,)`** and layer 32 is the fixed steer
@@ -20,12 +20,36 @@ For a submission and the active weekly concept, it:
    stream** at every token position;
 3. greedily generates completions for that day's ~150 frozen prompts (deterministic from
    `(day_index, seed)`, never reused across days);
-4. runs the concept's pinned detector and returns the **hit rate**.
+4. runs the concept's pinned weighted-lexicon detector and returns the day-score — `hit_rate`
+   (fraction of completions with intensity ≥ threshold, §8) or `graded` (mean normalized
+   intensity in [0,1]).
 
 The four competition concepts: `birthday_cake`, `medical_disclaimer`, `positive_sentiment`,
-`hedging`. Detectors are version-pinned regex lexicons today, behind a `Detector` interface
-so a pinned NLP classifier can be slotted in later (notably for `positive_sentiment`)
-without touching callers.
+`hedging`. All four (**v2**) are **weighted lexicons**: a completion's raw concept-score is the
+sum of matched cue weights. `birthday_cake`/`medical_disclaimer`/`hedging` use pinned
+weighted-regex tables; `positive_sentiment` uses the **AFINN-111** sentiment lexicon (net
+valence). Each concept's day-score is set by its `scoring` config — `hit_rate` (fraction of
+completions whose intensity ≥ `threshold`, spec §8) or `graded` (mean normalized intensity in
+`[0,1]`). **`graded` is a deliberate, config-gated deviation from §8** (`score = hit_rate`). The
+weight tables are pinned in the detector classes (versioned); only `mode`/`threshold`/`saturation`
+are config. All sit behind a `Detector` interface, so a detector can be swapped and its pinned
+version bumped without touching callers. AFINN-111 is bundled under the ODbL; see
+`concept_scorer/detectors/data/AFINN_NOTICE.txt`.
+
+## Scope boundary
+
+This module is **only** the per-submission scorer. Several parts of the competition spec are
+deliberately **owned by the parent Bittensor validator**, not implemented here:
+
+- **Weekly concept schedule (§4)** — which concept is active on a given day. The scorer is
+  concept-agnostic: the caller passes `active_concept`, and a submission whose metadata
+  `concept` doesn't match is rejected. It does not derive the active concept from the date.
+- **Incentive / winner-take-all / decay (§10)** — leaderboard, leader tracking, emission
+  decay, and hiding winners until a weekly round closes.
+- **Apex query protocol & rate-limits (§7, §11c)** — pulling submissions from miner
+  endpoints and enforcing the one-per-day-per-concept / four-per-day-per-hotkey caps.
+
+The scorer evaluates a submission on receipt and returns the per-concept `score`; the above wraps it.
 
 ## Interfaces
 
@@ -65,6 +89,13 @@ The build bakes the model (pre-quantized to NF4, ~7–8 GB) and freezes the held
 touches the network (`HF_HUB_OFFLINE=1`).
 
 ## Run locally on Apple Silicon (MPS)
+
+> **⚠️ Dev-only / not reproducible.** bitsandbytes NF4 is CUDA-only, so on MPS the model runs
+> **unquantized bf16**. 4-bit dequant is not bit-identical to bf16, so steering directions and
+> `alpha` calibrated on MPS will **not** reproduce on the pinned CUDA/NF4 validator (§2). Use
+> MPS for plumbing and iteration only; do all canonical calibration and scoring on CUDA+NF4.
+> The scorer logs a warning at load and tags every score and `/info` with `device` +
+> `quantized`, so non-NF4 results are self-evident.
 
 The Docker image above is **CUDA-only** (bitsandbytes 4-bit + `nvidia/cuda`); Docker
 Desktop on macOS can't reach the Apple GPU. To test on an Apple-Silicon Mac, run
@@ -155,8 +186,13 @@ the in-process `local` backend, which has the white-box forward-hook access stee
 `config/competition.yaml` is the single source of pinned values: model repo/revision SHA,
 quantization (NF4/bf16), submission rules (shape/dtype/norm tolerance/alpha bounds),
 generation params (greedy, seed, `max_new_tokens`), prompt-pool params, allowed concepts,
-and detector versions. **Fill in the placeholder `revision` and `dataset_revision` SHAs
-before building.** Library versions are pinned in `requirements.txt` (reproducibility).
+detector versions, and the per-concept `scoring` policy (`mode` `hit_rate`|`graded`,
+`threshold`, `saturation`). **Fill in the placeholder `revision` SHA before building** — both the
+build (`download_model.py`) and the model load **fail fast** on the
+`REPLACE_WITH_PINNED_40_CHAR_SHA` placeholder rather than fetch an unpinned model.
+(`dataset_revision` only affects rebuilding the already-frozen, sha256-checked pool.) Library
+versions are pinned in `requirements.txt`; `requirements-mac.txt` is a **dev-only**,
+non-reproducible overlay (newer torch/transformers, no bitsandbytes).
 
 ## Pre-launch artifacts
 

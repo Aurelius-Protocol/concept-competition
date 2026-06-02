@@ -57,7 +57,14 @@ concepts:
     - "hedging"
 
 detectors:
-  birthday_cake: "v1"
-  medical_disclaimer: "v1"
-  positive_sentiment: "v1"
-  hedging: "v1"
+  birthday_cake: "v2"
+  medical_disclaimer: "v2"
+  positive_sentiment: "v2"
+  hedging: "v2"
+
+# Lenient thresholds so the tiny dev model exercises both modes. (See competition.yaml.)
+scoring:
+  birthday_cake:      {mode: hit_rate, threshold: 1.0, saturation: 2.0}
+  medical_disclaimer: {mode: hit_rate, threshold: 1.0, saturation: 2.0}
+  positive_sentiment: {mode: graded,   threshold: 1.0, saturation: 4.0}
+  hedging:            {mode: graded,   threshold: 1.0, saturation: 2.0}

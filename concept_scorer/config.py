@@ -27,6 +27,10 @@ _DEFAULT_CONFIG_PATH = os.environ.get(
 # work without torch installed.
 _TORCH_DTYPE_NAMES = {"bfloat16", "float16", "float32"}
 
+# Sentinel revision in competition.yaml; MUST be replaced with the pinned 40-char commit SHA
+# before launch. Guarded at build time (download_model.py) and load time (model_runtime.py).
+PLACEHOLDER_REVISION = "REPLACE_WITH_PINNED_40_CHAR_SHA"
+
 
 @dataclass(frozen=True)
 class ModelCfg:
@@ -82,6 +86,14 @@ class ConceptsCfg:
 
 
 @dataclass(frozen=True)
+class ScoringCfg:
+    # threshold -> detector (decides per-completion `hit`); mode + saturation -> scorer.
+    threshold: float
+    mode: str = "hit_rate"          # "hit_rate" | "graded"
+    saturation: float = 1.0         # graded: per-completion clamp(score / saturation, 0, 1)
+
+
+@dataclass(frozen=True)
 class RuntimeCfg:
     """Local/dev runtime overlay — resolved from environment variables, NOT from YAML.
 
@@ -111,6 +123,9 @@ class Settings:
     prompts: PromptsCfg
     concepts: ConceptsCfg
     detectors: dict[str, str]
+    # Per-concept scoring policy (keys == concepts.active_allowed). threshold -> detector
+    # (decides `hit`); mode + saturation -> scorer (decides the day-score aggregation).
+    scoring: dict[str, ScoringCfg] = field(default_factory=dict)
     runtime: RuntimeCfg = field(default_factory=RuntimeCfg)
 
     def compute_dtype(self) -> "Any":  # returns a torch.dtype
@@ -144,6 +159,17 @@ class Settings:
             raise ValueError(
                 f"detector keys {set(self.detectors)} must match allowed concepts {allowed}"
             )
+        if set(self.scoring) != allowed:
+            raise ValueError(
+                f"scoring keys {set(self.scoring)} must match allowed concepts {allowed}"
+            )
+        for concept, sc in self.scoring.items():
+            if sc.mode not in ("hit_rate", "graded"):
+                raise ValueError(
+                    f"scoring[{concept!r}].mode {sc.mode!r} must be 'hit_rate' or 'graded'"
+                )
+            if sc.saturation <= 0:
+                raise ValueError(f"scoring[{concept!r}].saturation must be > 0")
 
 
 def _parse(raw: dict[str, Any]) -> Settings:
@@ -162,6 +188,7 @@ def _parse(raw: dict[str, Any]) -> Settings:
         prompts=PromptsCfg(**raw["prompts"]),
         concepts=ConceptsCfg(active_allowed=tuple(raw["concepts"]["active_allowed"])),
         detectors=dict(raw["detectors"]),
+        scoring={k: ScoringCfg(**v) for k, v in (raw.get("scoring") or {}).items()},
     )
     settings.validate_invariants()
     return settings

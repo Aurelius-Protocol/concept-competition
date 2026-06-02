@@ -8,10 +8,15 @@ layer-32 residual stream for every token.
 
 from __future__ import annotations
 
-from .config import Settings
+import logging
+import os
+
+from .config import PLACEHOLDER_REVISION, Settings
 from .generation import batched_greedy_generate, build_generation_config
 from .steering import SteeringHook
 from .submission import Submission
+
+logger = logging.getLogger(__name__)
 
 
 def select_device(pref: str) -> str:
@@ -45,6 +50,7 @@ class ModelRuntime:
         self.model = None
         self.tokenizer = None
         self.device = None
+        self.quantized = None
         self._gen_cfg = None
         self.ready = False
 
@@ -56,6 +62,28 @@ class ModelRuntime:
         device = select_device(self.settings.runtime.device)
         quantize = use_quantization(self.settings.runtime.quantize, device)
         dtype = self.settings.compute_dtype()
+
+        # D2: never fetch an unpinned revision from the hub. Loading from a local snapshot
+        # directory makes transformers ignore `revision`, so this only fires on a real hub
+        # pull (local_path is a repo id, not an existing directory).
+        if m.revision == PLACEHOLDER_REVISION and not os.path.isdir(m.local_path):
+            raise ValueError(
+                f"model.revision is the unpinned placeholder {PLACEHOLDER_REVISION!r}; set the "
+                "pinned 40-char commit SHA (config or CONCEPT_SCORER_MODEL_REVISION) before "
+                "loading from the hub."
+            )
+
+        # D1: bitsandbytes NF4 is CUDA-only. The MPS/CPU path runs unquantized bf16, which is
+        # NOT numerically identical to the pinned CUDA/NF4 validator (§2) — make that loud.
+        self.quantized = quantize
+        if not quantize:
+            logger.warning(
+                "Loading %s UNQUANTIZED on device=%s (no NF4). DEV-ONLY backend, NOT "
+                "reproducible vs the pinned CUDA/NF4 validator — do not calibrate alpha or "
+                "produce canonical scores here.",
+                m.repo_id,
+                device,
+            )
 
         kwargs = dict(
             dtype=dtype,  # transformers >=5 name (formerly torch_dtype)

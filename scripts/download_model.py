@@ -24,7 +24,7 @@ import sys
 # Make the package importable when run from the repo root during build.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from concept_scorer.config import load_settings  # noqa: E402
+from concept_scorer.config import PLACEHOLDER_REVISION, load_settings  # noqa: E402
 
 
 def main() -> None:
@@ -36,6 +36,12 @@ def main() -> None:
     settings = load_settings()
     repo_id = settings.model.repo_id
     revision = args.revision or settings.model.revision
+    if revision == PLACEHOLDER_REVISION:
+        sys.exit(
+            f"refusing to bake an unpinned model: revision is the placeholder "
+            f"{PLACEHOLDER_REVISION!r}. Pass --revision <40-char-sha> (or the Docker "
+            f"--build-arg HF_REVISION=<sha>), or set model.revision in the config."
+        )
     local_path = settings.model.local_path
     token = os.environ.get("HF_TOKEN")
 

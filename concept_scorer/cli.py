@@ -116,6 +116,7 @@ def _cmd_info(args) -> int:
         "steer_layer": s.model.steer_layer,
         "allowed_concepts": list(s.concepts.active_allowed),
         "detector_versions": dict(s.detectors),
+        "scoring": {k: dataclasses.asdict(v) for k, v in s.scoring.items()},
         "module_version": __version__,
         "schema_version": MODULE_SCHEMA_VERSION,
     }, indent=2))

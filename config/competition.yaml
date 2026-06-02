@@ -50,7 +50,18 @@ concepts:
     - "hedging"
 
 detectors:
-  birthday_cake: "v1"
-  medical_disclaimer: "v1"
-  positive_sentiment: "v1"
-  hedging: "v1"
+  birthday_cake: "v2"             # weighted regex lexicon
+  medical_disclaimer: "v2"        # weighted regex lexicon
+  positive_sentiment: "v2"        # AFINN-111 net-valence lexicon
+  hedging: "v2"                   # weighted regex lexicon
+
+# Per-concept scoring policy. threshold -> detector (decides per-completion `hit`);
+# mode + saturation -> scorer (decides the day-score). mode: hit_rate | graded.
+# graded (mean normalized intensity, in [0,1]) is a deliberate, config-gated deviation from
+# spec §8 (score = hit_rate). Weight tables are pinned in the detector classes (versioned);
+# calibrate thresholds/saturation against real steered gemma-3-12b completions before launch.
+scoring:
+  birthday_cake:      {mode: hit_rate, threshold: 2.0, saturation: 4.0}
+  medical_disclaimer: {mode: hit_rate, threshold: 2.0, saturation: 4.0}
+  positive_sentiment: {mode: graded,   threshold: 3.0, saturation: 8.0}
+  hedging:            {mode: graded,   threshold: 2.0, saturation: 4.0}

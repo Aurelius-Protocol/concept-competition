@@ -24,3 +24,4 @@ include = ["concept_scorer*"]
 
 [tool.setuptools.package-data]
 "concept_scorer.weather" = ["*.safetensors"]
+"concept_scorer.detectors" = ["data/*.txt"]

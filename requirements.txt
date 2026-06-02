@@ -10,7 +10,9 @@
 # The torch / bitsandbytes versions must match the CUDA base image (see Dockerfile) and
 # are part of the reproducibility pin set (§2 of the spec). Fill exact versions at build.
 torch==2.5.1
-transformers>=4.56.0          # REPLACE with the exact Gemma 3-capable version, pinned
+transformers==5.9.0           # pinned (Gemma-3-capable). MUST pass the CUDA weather smoke with
+                              # bitsandbytes==0.45.0 before launch; bump both together if the
+                              # bnb x transformers 4-bit integration breaks on CUDA.
 bitsandbytes==0.45.0
 accelerate==1.3.0
 safetensors==0.4.5
