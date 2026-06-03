@@ -25,10 +25,10 @@ For a submission and the active weekly concept, it:
    intensity in [0,1]).
 
 The four competition concepts: `birthday_cake`, `medical_disclaimer`, `positive_sentiment`,
-`hedging`. All four (**v2**) are **weighted lexicons**: a completion's raw concept-score is the
+`hedging`. All four are **weighted lexicons**: a completion's raw concept-score is the
 sum of matched cue weights. `birthday_cake`/`medical_disclaimer`/`hedging` use pinned
-weighted-regex tables; `positive_sentiment` uses the **AFINN-111** sentiment lexicon (net
-valence). Each concept's day-score is set by its `scoring` config — `hit_rate` (fraction of
+weighted-regex tables (**v2**); `positive_sentiment` uses the **AFINN-111** sentiment lexicon
+(**v3**, net valence). Each concept's day-score is set by its `scoring` config — `hit_rate` (fraction of
 completions whose intensity ≥ `threshold`, spec §8) or `graded` (mean normalized intensity in
 `[0,1]`). **`graded` is a deliberate, config-gated deviation from §8** (`score = hit_rate`). The
 weight tables are pinned in the detector classes (versioned); only `mode`/`threshold`/`saturation`
@@ -68,7 +68,7 @@ The scorer evaluates a submission on receipt and returns the per-concept `score`
 concept-scorer info
 concept-scorer validate --submission sub.safetensors --concept hedging   # no GPU
 concept-scorer score    --submission sub.safetensors --concept hedging --day-index 0 --seed 1234
-concept-scorer smoke    --floor 0.25                                      # weather reference (GPU)
+concept-scorer smoke    --floor 0.15                                      # weather reference (GPU)
 ```
 
 ## Build & run
@@ -126,7 +126,7 @@ reproduce the CUDA behavior, so unset = no change):
 | `CONCEPT_SCORER_POOL_PATH` | path to the frozen prompt pool on the host |
 | `CONCEPT_SCORER_MAX_PROMPTS` | cap effective `per_day` (fast first smoke) |
 | `CONCEPT_SCORER_ALPHA_MIN` / `_MAX` | override submission alpha bounds locally (steering-strength calibration) |
-| `CONCEPT_SCORER_BACKEND` | `local` (in-process, steers) or `openai` (LM Studio; baseline-only) |
+| `CONCEPT_SCORER_BACKEND` | `local` (in-process, steers), `vllm` (CUDA high-throughput, steers), or `openai` (LM Studio; baseline-only) |
 | `CONCEPT_SCORER_OPENAI_BASE_URL` / `_OPENAI_MODEL` / `_OPENAI_API_KEY` | endpoint, model id, and key for the `openai` backend |
 | `CONCEPT_SCORER_ALLOW_UNSTEERED` | `1` to let the `openai` backend run an unsteered baseline (the API equivalent of CLI `--baseline`) |
 | `CONCEPT_SCORER_CONFIG` | use an alternate config file (e.g. the dev overlay) |
@@ -153,8 +153,8 @@ export CONCEPT_SCORER_POOL_PATH=$PWD/data/prompt_pool.jsonl
 python scripts/download_model.py --mode snapshot          # ~24 GB bf16 weights -> MODEL_PATH
 python scripts/build_freeze_pool.py --pool-size 20000     # frozen pool -> POOL_PATH
 python scripts/build_weather_reference.py                 # weather vector on the real model (MPS)
-CONCEPT_SCORER_MAX_PROMPTS=8 concept-scorer smoke --floor 0.25   # quick green first
-concept-scorer smoke --floor 0.25                               # full 150-prompt smoke
+CONCEPT_SCORER_MAX_PROMPTS=8 concept-scorer smoke --floor 0.15   # quick green first
+concept-scorer smoke --floor 0.15                               # full 150-prompt smoke
 ```
 
 Generation on MPS is memory-bandwidth bound, so a full 150-prompt smoke takes a while;
@@ -178,8 +178,38 @@ $ CONCEPT_SCORER_BACKEND=openai CONCEPT_SCORER_OPENAI_BASE_URL=http://localhost:
 ```
 
 It is useful only for an **unsteered baseline** or plumbing checks — pass `--baseline` to
-run it (start the LM Studio server and load a model first). Real (steered) scoring must use
-the in-process `local` backend, which has the white-box forward-hook access steering needs.
+run it (start the LM Studio server and load a model first). Real (steered) scoring must use a
+**white-box** backend — `local`, or `vllm` on CUDA — which has the forward-hook access steering needs.
+
+## High-throughput CUDA backend (vLLM)
+
+For high-throughput scoring on CUDA, the **vLLM backend** (`CONCEPT_SCORER_BACKEND=vllm`) runs an
+in-process vLLM engine and applies the *same* layer-32 residual steering as the `local` backend, via
+vLLM's continuous batching. It is **CUDA-only** (vLLM has no MPS/CPU path) and pins its own torch
+stack, so install it in a **separate env** from `requirements.txt`:
+
+```bash
+pip install -r requirements-vllm.txt && pip install bitsandbytes   # vLLM brings its own torch
+export CONCEPT_SCORER_BACKEND=vllm
+export CONCEPT_SCORER_VLLM_QUANTIZATION=bitsandbytes   # NF4 — a bf16 12B won't fit a 24 GB GPU
+export CONCEPT_SCORER_VLLM_MAX_MODEL_LEN=4096          # cap KV-cache reservation on small-VRAM GPUs
+concept-scorer smoke --floor 0                         # "did it run"; vLLM scores are non-canonical
+```
+
+**Not canonical.** vLLM's engine/kernels are not bit-identical to the pinned transformers+NF4 path,
+so its scores need a re-pin + re-baseline before they count (SPEC §2). On the same prompts it
+reproduces the canonical NF4 hit-rate to within ~1/150 — a sanity check, not a re-baseline.
+
+Tuning knobs (all CUDA-only; defaults in `config.py`):
+
+| env var | meaning (default) |
+| --- | --- |
+| `CONCEPT_SCORER_VLLM_QUANTIZATION` | `None` (bf16) \| `bitsandbytes` \| `awq` \| `gptq` (default `None`) |
+| `CONCEPT_SCORER_VLLM_DTYPE` | compute dtype (default `bfloat16`) |
+| `CONCEPT_SCORER_VLLM_ENFORCE_EAGER` | keep the Python steering hook live; no CUDA graphs (default `1`) |
+| `CONCEPT_SCORER_VLLM_MAX_MODEL_LEN` | context cap for KV-cache sizing; `None` = model max (default `None`) |
+| `CONCEPT_SCORER_VLLM_GPU_MEM` | GPU memory utilization target 0–1 (default `0.90`) |
+| `CONCEPT_SCORER_VLLM_MAX_NUM_SEQS` | max concurrent sequences (default `256`) |
 
 ## Configuration
 

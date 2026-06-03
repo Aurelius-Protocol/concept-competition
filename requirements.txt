@@ -24,4 +24,4 @@ pyyaml==6.0.2
 python-multipart==0.0.20
 huggingface_hub==1.17.0       # transformers 5.9.0 requires hub>=1.5.0,<2.0 (the old 0.27.1 pin was
                               # unsatisfiable). Verified installable + running on CUDA with
-                              # torch 2.5.1 / transformers 5.9.0 / bitsandbytes 0.45.0.
+                              # torch 2.5.1 / transformers 5.9.0 / bitsandbytes 0.49.2.
