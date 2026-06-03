@@ -14,7 +14,8 @@ import torch
 import torch.nn as nn
 
 from concept_scorer.config import load_settings
-from concept_scorer.vllm_backend import _ResidualSteer, _resolve_decoder_layers
+from concept_scorer.steering import resolve_layers
+from concept_scorer.vllm_backend import _ResidualSteer
 
 
 def _settings_vllm_on_mps():
@@ -49,7 +50,7 @@ def test_vllm_knobs_default_to_canonical_choices():
     assert rt.vllm_dtype == "bfloat16"
 
 
-# --- _resolve_decoder_layers: the multimodal-path fix (verifiable on CPU) -------------------
+# --- resolve_layers: the multimodal-path fix (verifiable on CPU) ----------------------------
 
 def _module_with_layers(n: int = 48) -> nn.Module:
     leaf = nn.Module()
@@ -61,7 +62,7 @@ def test_resolver_text_only_layout():
     # Gemma3ForCausalLM: model.model.layers
     root = nn.Module()
     root.model = _module_with_layers()
-    assert len(_resolve_decoder_layers(root)) == 48
+    assert len(resolve_layers(root)) == 48
 
 
 def test_resolver_multimodal_layout():
@@ -70,14 +71,14 @@ def test_resolver_multimodal_layout():
     root.vision_tower = nn.Identity()
     root.language_model = nn.Module()
     root.language_model.model = _module_with_layers()
-    assert len(_resolve_decoder_layers(root)) == 48
+    assert len(resolve_layers(root)) == 48
 
 
 def test_resolver_raises_clear_diagnostic_when_absent():
     root = nn.Module()
     root.something_else = nn.Identity()
     with pytest.raises(AttributeError, match="could not locate decoder layers"):
-        _resolve_decoder_layers(root)
+        resolve_layers(root)
 
 
 # --- _ResidualSteer hook math (mirrors tests/test_steering.py, verifiable on CPU) -----------

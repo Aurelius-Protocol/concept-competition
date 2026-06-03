@@ -18,7 +18,7 @@ How steering works here (verified against vLLM's Gemma-3 implementation):
     here propagates into the residual stream entering layer 33 — the same effect as the HF hook,
     which adds to the decoder layer's returned hidden states.
   * ``gemma-3-12b-it`` is multimodal, so vLLM loads ``Gemma3ForConditionalGeneration`` and the text
-    decoder layers are at ``model.language_model.model.layers`` (``_resolve_decoder_layers`` handles
+    decoder layers are at ``model.language_model.model.layers`` (``steering.resolve_layers`` handles
     that and the text-only ``model.model.layers`` layout).
 
 Requirements for the hook to fire (set by ``load()``):
@@ -45,38 +45,10 @@ import torch
 from .config import Settings
 from .generation import format_prompts
 from .model_runtime import select_device
+from .steering import resolve_layers
 from .submission import Submission
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_decoder_layers(model) -> "torch.nn.ModuleList":
-    """Locate the text decoder-layer ModuleList on a loaded vLLM model.
-
-    Handles both the text-only ``Gemma3ForCausalLM`` (``model.model.layers``) and the multimodal
-    ``Gemma3ForConditionalGeneration`` (``model.language_model.model.layers``) layouts, plus a
-    couple of fallbacks. Raises a diagnostic listing the model's children if none match (e.g. a
-    future vLLM rename), so the fix point is obvious on the verification box.
-    """
-    candidates = (
-        ("model", "layers"),                    # Gemma3ForCausalLM (text-only)
-        ("language_model", "model", "layers"),  # Gemma3ForConditionalGeneration (multimodal)
-        ("language_model", "layers"),
-        ("layers",),
-    )
-    for path in candidates:
-        obj = model
-        for attr in path:
-            obj = getattr(obj, attr, None)
-            if obj is None:
-                break
-        if obj is not None:
-            return obj
-    children = list(dict(model.named_children()).keys())
-    raise AttributeError(
-        f"could not locate decoder layers on {type(model).__name__}; top-level children="
-        f"{children}. Update _resolve_decoder_layers for this vLLM version."
-    )
 
 
 class _ResidualSteer:
@@ -105,6 +77,8 @@ class _ResidualSteer:
     def clear(self) -> None:
         self.alpha = 0.0
         self._dir_cpu = None
+        self._cached_key = None
+        self._cached_vec = None
 
     def _vec(self, hs: "torch.Tensor") -> "torch.Tensor":
         key = (hs.device, hs.dtype)
@@ -208,7 +182,7 @@ class VLLMBackend:
         # returned _ResidualSteer is the live object the hook is bound to, so mutating it from
         # generate() steers the next forward pass.
         def _install(model) -> _ResidualSteer:
-            layers = _resolve_decoder_layers(model)
+            layers = resolve_layers(model)
             if len(layers) <= steer_layer:
                 raise RuntimeError(
                     f"resolved {len(layers)} decoder layers but steer_layer={steer_layer} "

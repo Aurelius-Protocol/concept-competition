@@ -149,7 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
     smp.add_argument("--reference", default=None)
     smp.add_argument("--day-index", type=int, default=0)
     smp.add_argument("--seed", type=int, default=1234)
-    smp.add_argument("--floor", type=float, default=0.15)
+    smp.add_argument("--floor", type=float, default=0.15,
+                     help="weather hit-rate PASS threshold (default 0.15, CUDA-NF4-calibrated; SPEC §12)")
     smp.add_argument("--baseline", action="store_true",
                      help="allow an UNSTEERED run on a black-box backend (not a valid score)")
     smp.set_defaults(func=_cmd_smoke)

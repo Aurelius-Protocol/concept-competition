@@ -15,15 +15,33 @@ import torch
 
 
 def resolve_layers(model) -> "torch.nn.ModuleList":
-    """Return the decoder-layer ModuleList for the loaded model (or a wrapped variant)."""
-    inner = getattr(model, "model", model)
-    if hasattr(inner, "layers"):
-        return inner.layers
-    # Fallback for a multimodal/language-model wrapper.
-    lm = getattr(inner, "language_model", None)
-    if lm is not None and hasattr(lm, "layers"):
-        return lm.layers
-    raise AttributeError("could not locate decoder layers on the model")
+    """Return the decoder-layer ModuleList for a loaded model (HF or vLLM, possibly wrapped).
+
+    Tries the known layouts in order: text-only ``model.model.layers``, the vLLM multimodal
+    Gemma-3 ``model.language_model.model.layers``, the HF multimodal wrapper
+    ``model.model.language_model.layers``, and a couple of fallbacks. Raises a diagnostic listing
+    the model's top-level children if none match (e.g. a future rename), so the fix point is obvious.
+    """
+    candidates = (
+        ("model", "layers"),                    # HF Gemma3ForCausalLM / vLLM text-only
+        ("language_model", "model", "layers"),  # vLLM Gemma3ForConditionalGeneration (multimodal)
+        ("model", "language_model", "layers"),  # HF multimodal wrapper
+        ("language_model", "layers"),
+        ("layers",),
+    )
+    for path in candidates:
+        obj = model
+        for attr in path:
+            obj = getattr(obj, attr, None)
+            if obj is None:
+                break
+        if obj is not None:
+            return obj
+    children = list(dict(model.named_children()).keys())
+    raise AttributeError(
+        f"could not locate decoder layers on {type(model).__name__}; top-level children="
+        f"{children}. Update resolve_layers() for this model/runtime."
+    )
 
 
 class SteeringHook:
