@@ -10,10 +10,11 @@
 # The torch / bitsandbytes versions must match the CUDA base image (see Dockerfile) and
 # are part of the reproducibility pin set (§2 of the spec). Fill exact versions at build.
 torch==2.5.1
-transformers==5.9.0           # pinned (Gemma-3-capable). MUST pass the CUDA weather smoke with
-                              # bitsandbytes==0.45.0 before launch; bump both together if the
-                              # bnb x transformers 4-bit integration breaks on CUDA.
-bitsandbytes==0.45.0
+transformers==5.9.0           # pinned (Gemma-3-capable); verified on CUDA via the weather smoke.
+                              # transformers 5.9.0's 4-bit path requires bitsandbytes>=0.46.1, so
+                              # the old 0.45.0 pin ImportError'd at load — bumped to 0.49.2 (verified
+                              # on CUDA: torch 2.5.1 / transformers 5.9.0 / bnb 0.49.2 NF4 smoke).
+bitsandbytes==0.49.2
 accelerate==1.3.0
 safetensors==0.4.5
 fastapi==0.115.6
@@ -21,4 +22,6 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.4
 pyyaml==6.0.2
 python-multipart==0.0.20
-huggingface_hub==0.27.1
+huggingface_hub==1.17.0       # transformers 5.9.0 requires hub>=1.5.0,<2.0 (the old 0.27.1 pin was
+                              # unsatisfiable). Verified installable + running on CUDA with
+                              # torch 2.5.1 / transformers 5.9.0 / bitsandbytes 0.45.0.
