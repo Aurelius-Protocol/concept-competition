@@ -120,6 +120,11 @@ class RuntimeCfg:
     vllm_enforce_eager: bool = True
     vllm_gpu_memory_utilization: float = 0.90
     vllm_max_num_seqs: int = 256
+    # Cap the context window vLLM reserves KV cache for. None => the model's full max_model_len
+    # (gemma-3-12b advertises 131072), whose single-sequence KV reservation does NOT fit beside
+    # the weights on a 24 GB card. The eval only generates short completions on short prompts, so
+    # set e.g. CONCEPT_SCORER_VLLM_MAX_MODEL_LEN=4096 to fit small-VRAM GPUs.
+    vllm_max_model_len: int | None = None
 
 
 @dataclass(frozen=True)
@@ -231,6 +236,11 @@ def _runtime_from_env() -> RuntimeCfg:
         vllm_enforce_eager=(_env("CONCEPT_SCORER_VLLM_ENFORCE_EAGER") or "1").lower() in ("1", "true", "yes"),
         vllm_gpu_memory_utilization=float(_env("CONCEPT_SCORER_VLLM_GPU_MEM") or 0.90),
         vllm_max_num_seqs=int(_env("CONCEPT_SCORER_VLLM_MAX_NUM_SEQS") or 256),
+        vllm_max_model_len=(
+            int(_env("CONCEPT_SCORER_VLLM_MAX_MODEL_LEN"))
+            if _env("CONCEPT_SCORER_VLLM_MAX_MODEL_LEN")
+            else None
+        ),
     )
 
 

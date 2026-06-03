@@ -158,6 +158,13 @@ class VLLMBackend:
         # per-eval state we mutate reaches it. Must be set before importing vllm.
         os.environ.setdefault("VLLM_ENABLE_V1_MULTIPROCESSING", "0")
 
+        # Use vLLM's PyTorch-native top-k/top-p sampler, not FlashInfer's. FlashInfer JIT-compiles
+        # a CUDA kernel on first use, which needs the CUDA toolkit (nvcc); on a driver-only box
+        # (e.g. WSL) that aborts the run. We decode greedily (temperature=0), so the native sampler
+        # is argmax-identical — no quality/throughput cost. Override with
+        # VLLM_USE_FLASHINFER_SAMPLER=1 on a box that has nvcc.
+        os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
+
         try:
             from vllm import LLM, SamplingParams
         except ImportError as e:
@@ -181,6 +188,7 @@ class VLLMBackend:
             enforce_eager=rt.vllm_enforce_eager,
             gpu_memory_utilization=rt.vllm_gpu_memory_utilization,
             max_num_seqs=rt.vllm_max_num_seqs,
+            max_model_len=rt.vllm_max_model_len,
             seed=gen.seed,
         )
         self.device = device
