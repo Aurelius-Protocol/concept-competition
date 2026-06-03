@@ -114,7 +114,7 @@ def score_submission(
             "seed": seed,
             "detector_version": settings.detectors.get(active_concept),
             "scoring_mode": settings.scoring[active_concept].mode,
-            "model_revision": settings.model.revision,
+            "model_revision": getattr(runtime, "model_revision", settings.model.revision),
             "device": getattr(runtime, "device", None),
             "quantized": getattr(runtime, "quantized", None),
             "timings_ms": {
