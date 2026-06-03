@@ -161,7 +161,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    try:
+        parser = build_parser()  # building the parser loads + validates config (get_settings)
+    except ValueError as e:
+        # Malformed env var / failed config invariant -> clean message, not a stack trace.
+        print(json.dumps({"error_code": "config_error", "message": str(e)}), file=sys.stderr)
+        return 2
+    args = parser.parse_args(argv)
     return args.func(args)
 
 

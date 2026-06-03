@@ -213,6 +213,36 @@ def _env(name: str) -> str | None:
     return v if v not in (None, "") else None
 
 
+def _env_int(name: str, default: "int | None") -> "int | None":
+    """Parse an int env var (or ``default`` if unset); a malformed value raises a clear error."""
+    v = _env(name)
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        raise ValueError(f"{name}={v!r} is not an integer") from None
+
+
+def _env_float(name: str, default: float) -> float:
+    """Parse a float env var (or ``default`` if unset); a malformed value raises a clear error."""
+    v = _env(name)
+    if v is None:
+        return default
+    try:
+        return float(v)
+    except ValueError:
+        raise ValueError(f"{name}={v!r} is not a number") from None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse a bool env var (1/true/yes/on, case-insensitive), or ``default`` if unset."""
+    v = _env(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
 def _sibling_sha256(pool_path: str) -> str:
     """Digest path next to a pool file, matching scripts/build_freeze_pool.py (.jsonl -> .sha256)."""
     if pool_path.endswith(".jsonl"):
@@ -221,7 +251,6 @@ def _sibling_sha256(pool_path: str) -> str:
 
 
 def _runtime_from_env() -> RuntimeCfg:
-    mp = _env("CONCEPT_SCORER_MAX_PROMPTS")
     return RuntimeCfg(
         device=(_env("CONCEPT_SCORER_DEVICE") or "auto").lower(),
         quantize=(_env("CONCEPT_SCORER_QUANTIZE") or "auto").lower(),
@@ -229,18 +258,14 @@ def _runtime_from_env() -> RuntimeCfg:
         openai_base_url=_env("CONCEPT_SCORER_OPENAI_BASE_URL"),
         openai_model=_env("CONCEPT_SCORER_OPENAI_MODEL"),
         openai_api_key=_env("CONCEPT_SCORER_OPENAI_API_KEY") or "lm-studio",
-        max_prompts=int(mp) if mp else None,
-        allow_unsteered=(_env("CONCEPT_SCORER_ALLOW_UNSTEERED") or "").lower() in ("1", "true", "yes"),
+        max_prompts=_env_int("CONCEPT_SCORER_MAX_PROMPTS", None),
+        allow_unsteered=_env_bool("CONCEPT_SCORER_ALLOW_UNSTEERED", False),
         vllm_dtype=(_env("CONCEPT_SCORER_VLLM_DTYPE") or "bfloat16"),
         vllm_quantization=_env("CONCEPT_SCORER_VLLM_QUANTIZATION"),
-        vllm_enforce_eager=(_env("CONCEPT_SCORER_VLLM_ENFORCE_EAGER") or "1").lower() in ("1", "true", "yes"),
-        vllm_gpu_memory_utilization=float(_env("CONCEPT_SCORER_VLLM_GPU_MEM") or 0.90),
-        vllm_max_num_seqs=int(_env("CONCEPT_SCORER_VLLM_MAX_NUM_SEQS") or 256),
-        vllm_max_model_len=(
-            int(_env("CONCEPT_SCORER_VLLM_MAX_MODEL_LEN"))
-            if _env("CONCEPT_SCORER_VLLM_MAX_MODEL_LEN")
-            else None
-        ),
+        vllm_enforce_eager=_env_bool("CONCEPT_SCORER_VLLM_ENFORCE_EAGER", True),
+        vllm_gpu_memory_utilization=_env_float("CONCEPT_SCORER_VLLM_GPU_MEM", 0.90),
+        vllm_max_num_seqs=_env_int("CONCEPT_SCORER_VLLM_MAX_NUM_SEQS", 256),
+        vllm_max_model_len=_env_int("CONCEPT_SCORER_VLLM_MAX_MODEL_LEN", None),
     )
 
 
@@ -290,12 +315,11 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     # alpha without editing the pinned competition.yaml — useful when a model's residual
     # magnitudes need a stronger push than the pinned alpha range allows.
     submission = settings.submission
-    amin, amax = _env("CONCEPT_SCORER_ALPHA_MIN"), _env("CONCEPT_SCORER_ALPHA_MAX")
-    if amin or amax:
+    if _env("CONCEPT_SCORER_ALPHA_MIN") or _env("CONCEPT_SCORER_ALPHA_MAX"):
         submission = replace(
             submission,
-            alpha_min=float(amin) if amin else submission.alpha_min,
-            alpha_max=float(amax) if amax else submission.alpha_max,
+            alpha_min=_env_float("CONCEPT_SCORER_ALPHA_MIN", submission.alpha_min),
+            alpha_max=_env_float("CONCEPT_SCORER_ALPHA_MAX", submission.alpha_max),
         )
 
     overridden = replace(settings, model=model, prompts=prompts, submission=submission, runtime=runtime)

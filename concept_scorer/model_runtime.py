@@ -20,16 +20,32 @@ logger = logging.getLogger(__name__)
 
 
 def select_device(pref: str) -> str:
-    """Resolve ``auto`` to the best available device: cuda > mps > cpu."""
+    """Resolve the runtime device. ``auto`` picks cuda > mps > cpu; an explicit ``cuda``/``mps``
+    request is honored only if actually available — otherwise raise a clear error instead of
+    letting it crash obscurely later inside transformers/bitsandbytes."""
     import torch
 
+    def _cuda() -> bool:
+        return torch.cuda.is_available()
+
+    def _mps() -> bool:
+        m = getattr(torch.backends, "mps", None)
+        return m is not None and m.is_available()
+
     pref = (pref or "auto").lower()
-    if pref in ("cuda", "mps", "cpu"):
-        return pref
-    if torch.cuda.is_available():
+    if pref == "cuda":
+        if not _cuda():
+            raise RuntimeError("CONCEPT_SCORER_DEVICE=cuda but no CUDA device is available")
         return "cuda"
-    mps = getattr(torch.backends, "mps", None)
-    if mps is not None and mps.is_available():
+    if pref == "mps":
+        if not _mps():
+            raise RuntimeError("CONCEPT_SCORER_DEVICE=mps but no MPS device is available")
+        return "mps"
+    if pref == "cpu":
+        return "cpu"
+    if _cuda():
+        return "cuda"
+    if _mps():
         return "mps"
     return "cpu"
 
