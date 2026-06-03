@@ -23,6 +23,8 @@ Both backends expose the same surface used by the scorer: ``load()``, ``ready``,
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 from .config import Settings
 
 
@@ -73,8 +75,8 @@ class OpenAIBackend:
                 f"an UNSTEERED baseline (not a valid competition score)."
             )
         gen = self.settings.generation
-        out: list[str] = []
-        for instruction in instructions:
+
+        def _one(instruction: str) -> str:
             resp = self._client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": instruction}],
@@ -82,8 +84,14 @@ class OpenAIBackend:
                 max_tokens=gen.max_new_tokens,
                 seed=gen.seed,
             )
-            out.append((resp.choices[0].message.content or "").strip())
-        return out
+            return (resp.choices[0].message.content or "").strip()
+
+        # Per-prompt requests are independent (greedy => order-independent), so fan out over a
+        # bounded thread pool and reassemble in input order; ex.map re-raises the first error.
+        if len(instructions) <= 1:
+            return [_one(i) for i in instructions]
+        with ThreadPoolExecutor(max_workers=min(8, len(instructions))) as ex:
+            return list(ex.map(_one, instructions))
 
 
 def build_backend(settings: Settings):

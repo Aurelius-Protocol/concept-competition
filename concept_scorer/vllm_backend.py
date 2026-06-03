@@ -40,12 +40,10 @@ from __future__ import annotations
 import logging
 import os
 
-import torch
-
 from .config import Settings
 from .generation import format_prompts
 from .model_runtime import select_device
-from .steering import resolve_layers
+from .steering import DirectionCache, add_steering, resolve_layers
 from .submission import Submission
 
 logger = logging.getLogger(__name__)
@@ -56,44 +54,27 @@ class _ResidualSteer:
 
     Installed once on the layer-32 module (in the in-process vLLM worker). ``generate()`` calls
     :meth:`set` before submitting a batch and :meth:`clear` after, so only the intended eval is
-    steered. Mirrors :class:`~concept_scorer.steering.SteeringHook`'s math: ``hs + alpha*direction``
-    broadcast over ``(num_tokens, hidden)``, with the direction cast to the hidden-state
-    device/dtype lazily and cached.
+    steered. The steer math + lazy device/dtype cast are shared with the HF path via
+    :func:`~concept_scorer.steering.add_steering` and :class:`~concept_scorer.steering.DirectionCache`.
     """
 
     def __init__(self) -> None:
         self.alpha = 0.0
-        self._dir_cpu = None
-        self._cached_key = None
-        self._cached_vec = None
+        self._direction = None  # steering.DirectionCache, (re)created per eval by set()
         self.handle = None
 
-    def set(self, direction: "torch.Tensor", alpha: float) -> None:
+    def set(self, direction, alpha: float) -> None:
         self.alpha = float(alpha)
-        self._dir_cpu = direction.detach().to(torch.float32).reshape(-1).cpu()
-        self._cached_key = None
-        self._cached_vec = None
+        self._direction = DirectionCache(direction)
 
     def clear(self) -> None:
         self.alpha = 0.0
-        self._dir_cpu = None
-        self._cached_key = None
-        self._cached_vec = None
-
-    def _vec(self, hs: "torch.Tensor") -> "torch.Tensor":
-        key = (hs.device, hs.dtype)
-        if self._cached_key != key:
-            self._cached_vec = self._dir_cpu.to(device=hs.device, dtype=hs.dtype)
-            self._cached_key = key
-        return self._cached_vec
+        self._direction = None
 
     def __call__(self, module, inputs, output):
-        if self.alpha == 0.0 or self._dir_cpu is None:
+        if self.alpha == 0.0 or self._direction is None:
             return output
-        if isinstance(output, tuple):
-            hs = output[0]
-            return (hs + self.alpha * self._vec(hs), *output[1:])
-        return output + self.alpha * self._vec(output)
+        return add_steering(output, self.alpha, self._direction)
 
 
 class VLLMBackend:
@@ -233,4 +214,4 @@ class VLLMBackend:
             self._steer.clear()
 
         # vLLM preserves input order in the returned list; index 0 is the single greedy completion.
-        return [out.outputs[0].text.strip() for out in outputs]
+        return [(out.outputs[0].text.strip() if out.outputs else "") for out in outputs]

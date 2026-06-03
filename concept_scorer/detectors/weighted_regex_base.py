@@ -31,14 +31,14 @@ class WeightedRegexLexiconDetector(Detector):
 
     def __init__(self, threshold: float | None = None) -> None:
         self.threshold = float(self.DEFAULT_THRESHOLD if threshold is None else threshold)
-        self._weights = [(p, re.compile(p, self._FLAGS), float(w)) for p, w in self.WEIGHTS]
+        self._weights = [(re.compile(p, self._FLAGS), float(w)) for p, w in self.WEIGHTS]
         self._neg = [re.compile(p, self._FLAGS) for p in self.NEGATIONS]
 
     def detect(self, completion: str) -> DetectorResult:
         text = completion or ""
         if any(rx.search(text) for rx in self._neg):
             return DetectorResult(hit=False, score=0.0, matched=[])
-        fired = [(pat, w) for pat, rx, w in self._weights if rx.search(text)]
+        fired = [(rx, w) for rx, w in self._weights if rx.search(text)]
         raw = sum(w for _, w in fired)
-        matched = [pat for pat, _ in fired]
+        matched = [rx.pattern for rx, _ in fired]
         return DetectorResult(hit=raw >= self.threshold, score=raw, matched=matched)

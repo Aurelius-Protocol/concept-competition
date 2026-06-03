@@ -18,16 +18,17 @@ from concept_scorer.steering import resolve_layers
 from concept_scorer.vllm_backend import _ResidualSteer
 
 
-def _settings_vllm_on_mps():
-    # Force backend=vllm and a non-CUDA device so the guard short-circuits before importing vllm.
+def _settings_vllm_non_cuda():
+    # Force backend=vllm + a non-CUDA device (cpu is always available, so select_device returns it)
+    # so the backend's CUDA guard short-circuits before importing vllm.
     s = load_settings()
-    return replace(s, runtime=replace(s.runtime, backend="vllm", device="mps"))
+    return replace(s, runtime=replace(s.runtime, backend="vllm", device="cpu"))
 
 
 def test_vllm_backend_refuses_non_cuda():
     from concept_scorer.vllm_backend import VLLMBackend
 
-    b = VLLMBackend(_settings_vllm_on_mps())
+    b = VLLMBackend(_settings_vllm_non_cuda())
     assert b.ready is False
     with pytest.raises(RuntimeError, match="requires CUDA"):
         b.load()
@@ -39,7 +40,7 @@ def test_build_backend_dispatches_to_vllm():
     from concept_scorer.backends import build_backend
 
     with pytest.raises(RuntimeError, match="requires CUDA"):
-        build_backend(_settings_vllm_on_mps())
+        build_backend(_settings_vllm_non_cuda())
 
 
 def test_vllm_knobs_default_to_canonical_choices():

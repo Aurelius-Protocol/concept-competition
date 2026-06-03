@@ -44,28 +44,45 @@ def resolve_layers(model) -> "torch.nn.ModuleList":
     )
 
 
+class DirectionCache:
+    """A steering direction held as a CPU float32 vector, lazily cast + cached to a hidden-state
+    device/dtype. Shared by the HF (:class:`SteeringHook`) and vLLM (``_ResidualSteer``) paths so
+    the cast/cache logic lives in exactly one place.
+    """
+
+    def __init__(self, direction: "torch.Tensor") -> None:
+        self._cpu = direction.detach().to(torch.float32).reshape(-1).cpu()
+        self._key = None
+        self._vec = None
+
+    def to(self, hs: "torch.Tensor") -> "torch.Tensor":
+        key = (hs.device, hs.dtype)
+        if self._key != key:
+            self._vec = self._cpu.to(device=hs.device, dtype=hs.dtype)
+            self._key = key
+        return self._vec
+
+
+def add_steering(output, alpha: float, direction: "DirectionCache"):
+    """Add ``alpha * direction`` to a decoder layer's residual output, broadcasting over batch and
+    sequence. Handles both the ``(hidden_states, ...)`` tuple a Gemma decoder layer returns and a
+    bare hidden-states tensor. Shared by both steering paths so the math stays identical.
+    """
+    if isinstance(output, tuple):
+        hs = output[0]
+        return (hs + alpha * direction.to(hs), *output[1:])
+    return output + alpha * direction.to(output)
+
+
 class SteeringHook:
     def __init__(self, model, layer_idx: int, direction: "torch.Tensor", alpha: float):
         self._layer = resolve_layers(model)[layer_idx]
         self._alpha = float(alpha)
-        # Keep a CPU float32 copy; cast/move to the hidden-state device+dtype lazily.
-        self._direction_cpu = direction.detach().to(torch.float32).reshape(-1).cpu()
-        self._cached_key = None
-        self._cached_vec = None
+        self._direction = DirectionCache(direction)
         self._handle = None
 
-    def _steer_vec(self, hs: "torch.Tensor") -> "torch.Tensor":
-        key = (hs.device, hs.dtype)
-        if self._cached_key != key:
-            self._cached_vec = self._direction_cpu.to(device=hs.device, dtype=hs.dtype)
-            self._cached_key = key
-        return self._cached_vec
-
     def _hook(self, module, inputs, output):
-        if isinstance(output, tuple):
-            hs = output[0]
-            return (hs + self._alpha * self._steer_vec(hs), *output[1:])
-        return output + self._alpha * self._steer_vec(output)
+        return add_steering(output, self._alpha, self._direction)
 
     def __enter__(self) -> "SteeringHook":
         self._handle = self._layer.register_forward_hook(self._hook)
