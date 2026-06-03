@@ -30,8 +30,11 @@ torch = pytest.importorskip("torch")
 pytestmark = pytest.mark.gpu
 
 # Canonical backend (CUDA + bitsandbytes NF4): the calibrated absolute floor the reference
-# must clear. This is the result that counts for the competition.
-CANONICAL_FLOOR = 0.25
+# must clear. This is the result that counts for the competition. Calibrated on CUDA NF4
+# (2026-06-02): the weather reference plateaus at ~0.18-0.20 (alpha 12k-16k) across
+# torch 2.5.1/2.11 x bnb 0.49.2, and degenerates above ~20k; 0.15 keeps ~0.83x margin
+# (a broken hook / wrong layer scores <0.05).
+CANONICAL_FLOOR = 0.15
 # Local/dev backend (MPS/CPU, unquantized bf16): NF4 is CUDA-only, so the absolute floor does
 # not transfer off-CUDA. We require only a clear directional lift of steered over the alpha=0
 # baseline (observed ~0.12 vs ~0.007 for gemma-3-12b on MPS).
@@ -92,7 +95,7 @@ def test_weather_steering_beats_floor_and_zero_alpha(runtime_and_pool):
         # Canonical backend: the calibrated absolute floor is the result that counts. On
         # gemma-3-12b the layer-32 steering window is narrow (the model degenerates into
         # repetition before a diff-of-means vector produces many distinct concept words), so a
-        # known-good reference reaches ~0.3, not ~0.8 — hence a modest floor.
+        # known-good reference reaches ~0.18-0.20 on CUDA NF4 (measured), not ~0.8 — hence a low floor.
         assert steered >= CANONICAL_FLOOR, (
             f"weather hit_rate {steered:.3f} below canonical floor {CANONICAL_FLOOR}"
         )

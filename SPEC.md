@@ -228,12 +228,14 @@ parts of the competition are deliberately owned by the **parent Bittensor valida
   dev pin is MPS-verified only).
 - **Calibration on the canonical backend** — `alpha`, the per-concept `threshold`/`saturation`, and the
   weight tables tuned against real steered gemma-3-12b completions on CUDA + NF4, then frozen.
-- **⚠️ The `0.25` GPU-smoke floor is uncalibrated on CUDA (2026-06-02 data point).** `CANONICAL_FLOOR`
-  in `tests/test_gpu_smoke.py` was an estimate from MPS-only runs. The first real CUDA + NF4
-  measurement of the weather reference is **29/150 = 0.193** (the vLLM-NF4 path agrees at 0.187) —
-  i.e. **below 0.25**, so the canonical smoke currently fails the floor. Retune the reference `alpha`
-  and/or lower the floor against the *pinned* stack (`torch==2.5.1` / `bitsandbytes==0.45.0`, not the
-  verification box's `2.11` / `0.49.2`, whose NF4 kernels differ — §2) before launch.
+- **GPU-smoke floor recalibrated on CUDA NF4 (2026-06-02).** The old `CANONICAL_FLOOR = 0.25` was an
+  MPS-era estimate, never CUDA-tested. An alpha sweep on CUDA NF4 shows the weather reference
+  plateaus at **~0.18–0.20** (alpha 12k–16k) and **degenerates into repetition above ~20k**, so 0.25
+  was unreachable. At alpha 12000: 0.180 (torch 2.5.1 / bnb 0.49.2), 0.193 (torch 2.11 / bnb 0.49.2),
+  0.187 (vLLM). Kept `alpha=12000` (peak, safely pre-degeneration); lowered `CANONICAL_FLOOR` and the
+  CLI smoke default to **0.15**. Also fixed the pin set that blocked the canonical CUDA stack:
+  `transformers==5.9.0` needs `huggingface_hub>=1.5.0` (was `0.27.1`) and `bitsandbytes>=0.46.1`
+  (was `0.45.0`) — now `huggingface_hub==1.17.0`, `bitsandbytes==0.49.2`. Re-confirm if the stack changes.
 
 ---
 
