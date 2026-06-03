@@ -40,6 +40,29 @@ keeps hit rates reproducible.
   results are identifiable and never mistaken for canonical ones. Calibration and scoring that
   count must run on CUDA + NF4.
 
+### Throughput backend (vLLM) — CUDA verification (2026-06-02)
+
+A high-throughput `vllm` backend (`CONCEPT_SCORER_BACKEND=vllm`) sits alongside the canonical
+in-process `local` path and applies the **same** layer-32 residual-stream steering (forward hook)
+under vLLM's continuous batching. It was verified end-to-end on CUDA (RTX 4090, 24 GB, WSL2).
+
+- **Verified stack:** `vllm==0.22.0`, `torch==2.11.0+cu130`, `transformers==5.9.0`,
+  `bitsandbytes==0.49.2`, against the non-gated `unsloth/gemma-3-12b-it-bnb-4bit` checkpoint with
+  `CONCEPT_SCORER_VLLM_QUANTIZATION=bitsandbytes`.
+- **Cross-backend agreement:** on the same 150 prompts (day 0, seed 1234) the vLLM-NF4 weather
+  hit-rate was **28/150 = 0.187** vs the canonical transformers-NF4 **29/150 = 0.193** — within one
+  hit. Steered-vs-`alpha=0` on vLLM was 3/16 vs 0/16, confirming the hook fires. This is a sanity
+  check that the throughput path reproduces the steering behavior, **not** a re-baseline.
+- **Still non-canonical for scoring:** vLLM's engine/kernels are not bit-identical to the pinned
+  transformers+NF4 path, so vLLM scores need a re-pin + re-baseline before they count.
+- **Driver-only-CUDA requirements (box without the CUDA toolkit / `nvcc`):** the backend forces
+  vLLM's PyTorch-native sampler (`VLLM_USE_FLASHINFER_SAMPLER=0`, set in `load()`) — FlashInfer's
+  sampler JIT-needs `nvcc`, and greedy decode makes the native path argmax-identical. Triton's
+  helper needs Python dev headers (`Python.h`), so build the env on a Python that ships them (e.g.
+  a uv-managed CPython, not a headers-less system `python3.12`). On ≤24 GB GPUs cap the context via
+  `CONCEPT_SCORER_VLLM_MAX_MODEL_LEN` (e.g. 4096): gemma-3-12b's 131072 window can't reserve KV
+  cache beside the NF4 weights.
+
 ## 3. Layer
 
 Residual stream at layer 32 — a single, fixed layer for the entire competition (matching the
@@ -205,6 +228,12 @@ parts of the competition are deliberately owned by the **parent Bittensor valida
   dev pin is MPS-verified only).
 - **Calibration on the canonical backend** — `alpha`, the per-concept `threshold`/`saturation`, and the
   weight tables tuned against real steered gemma-3-12b completions on CUDA + NF4, then frozen.
+- **⚠️ The `0.25` GPU-smoke floor is uncalibrated on CUDA (2026-06-02 data point).** `CANONICAL_FLOOR`
+  in `tests/test_gpu_smoke.py` was an estimate from MPS-only runs. The first real CUDA + NF4
+  measurement of the weather reference is **29/150 = 0.193** (the vLLM-NF4 path agrees at 0.187) —
+  i.e. **below 0.25**, so the canonical smoke currently fails the floor. Retune the reference `alpha`
+  and/or lower the floor against the *pinned* stack (`torch==2.5.1` / `bitsandbytes==0.45.0`, not the
+  verification box's `2.11` / `0.49.2`, whose NF4 kernels differ — §2) before launch.
 
 ---
 
