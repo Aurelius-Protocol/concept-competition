@@ -1,11 +1,11 @@
 model:
-  # Gemma 4 — there is no 12B variant; we pin the 31B dense model.
+  # Gemma 3 12B (instruction-tuned). Gated on HF — accept the license + use an HF token.
   # NOTE: revision is a placeholder; replace with the exact pinned commit SHA at build time.
-  repo_id: "google/gemma-4-31B-it"
+  repo_id: "google/gemma-3-12b-it"
   revision: "REPLACE_WITH_PINNED_40_CHAR_SHA"
-  local_path: "/opt/models/gemma-4-31B-it"
-  hidden_size: 5376
-  num_hidden_layers: 60
+  local_path: "/opt/models/gemma-3-12b-it"
+  hidden_size: 3840
+  num_hidden_layers: 48
   steer_layer: 32
 
 quant:
@@ -16,11 +16,15 @@ quant:
 
 submission:
   tensor_name: "direction"
-  expected_shape: [5376]
+  expected_shape: [3840]
   expected_dtype: "float32"
   norm_tolerance: 1.0e-3        # |L2_norm(direction) - 1| <= tol
-  alpha_min: -20.0
-  alpha_max: 20.0
+  # Absolute steering (hs += alpha*direction). gemma-3-12b's layer-32 residual L2 norm is
+  # ~57k/token (measured on MPS), so steering only takes effect around alpha~16k-32k and
+  # degenerates above ~32k; the original ±20 was ~1000x too small. Bounds widened to the
+  # calibrated range. NOTE: this is model/layer-specific — recalibrate if either changes.
+  alpha_min: -32000.0
+  alpha_max: 32000.0
 
 generation:
   max_new_tokens: 64
@@ -46,7 +50,18 @@ concepts:
     - "hedging"
 
 detectors:
-  birthday_cake: "v1"
-  medical_disclaimer: "v1"
-  positive_sentiment: "v1"
-  hedging: "v1"
+  birthday_cake: "v2"             # weighted regex lexicon
+  medical_disclaimer: "v2"        # weighted regex lexicon
+  positive_sentiment: "v3"        # AFINN-111 lexicon (phrase + negation handling)
+  hedging: "v2"                   # weighted regex lexicon
+
+# Per-concept scoring policy. threshold -> detector (decides per-completion `hit`);
+# mode + saturation -> scorer (decides the day-score). mode: hit_rate | graded.
+# graded (mean normalized intensity, in [0,1]) is a deliberate, config-gated deviation from
+# spec §8 (score = hit_rate). Weight tables are pinned in the detector classes (versioned);
+# calibrate thresholds/saturation against real steered gemma-3-12b completions before launch.
+scoring:
+  birthday_cake:      {mode: hit_rate, threshold: 2.0, saturation: 4.0}
+  medical_disclaimer: {mode: hit_rate, threshold: 2.0, saturation: 4.0}
+  positive_sentiment: {mode: graded,   threshold: 3.0, saturation: 8.0}
+  hedging:            {mode: graded,   threshold: 2.0, saturation: 4.0}

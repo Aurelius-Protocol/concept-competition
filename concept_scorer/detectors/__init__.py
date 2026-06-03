@@ -16,18 +16,25 @@ DETECTOR_REGISTRY: dict[str, type[Detector]] = {
 }
 
 
-def get_detector(concept: str, detector_versions: dict[str, str] | None = None) -> Detector:
+def get_detector(
+    concept: str,
+    detector_versions: dict[str, str] | None = None,
+    threshold: float | None = None,
+) -> Detector:
     """Instantiate the detector for ``concept``.
 
     If ``detector_versions`` (the pinned ``Settings.detectors`` map) is provided, assert
     the instantiated detector's version matches the pin — guarding against silently
     running a different detector than the competition pinned.
+
+    ``threshold`` (from the concept's ``Settings.scoring`` entry) is forwarded to the
+    detector constructor when provided; all four scoreable detectors accept it.
     """
     try:
         cls = DETECTOR_REGISTRY[concept]
     except KeyError:
         raise KeyError(f"no detector registered for concept {concept!r}") from None
-    detector = cls()
+    detector = cls() if threshold is None else cls(threshold=threshold)
     if detector_versions is not None:
         pinned = detector_versions.get(concept)
         if pinned is not None and detector.version != pinned:

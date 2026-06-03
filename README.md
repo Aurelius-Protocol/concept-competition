@@ -2,30 +2,54 @@
 
 A **self-contained Docker scoring module** for the Apex Steering Competition. It runs
 inside a validator but knows nothing about Bittensor — it only evaluates and scores
-concept-steering submissions against a pinned **Gemma 4 31B** model and returns
-`score = hit_rate`.
+concept-steering submissions against a pinned **Gemma 3 12B** model and returns a per-concept
+`score` (aggregated as `hit_rate` or `graded`, per the `scoring` config).
 
-> **Model note:** the competition spec originally named `gemma-3-12b-it`. The model has
-> been changed to **Gemma 4**, which ships no 12B variant, so this module pins
-> **`google/gemma-4-31B-it`** (dense, `hidden_size=5376`, 60 layers). The steering
-> `direction` is therefore shape **`(5376,)`**; layer 32 remains the fixed steer layer.
+> **Model note:** this module pins **`google/gemma-3-12b-it`** (`hidden_size=3840`, 48
+> layers); the steering `direction` is shape **`(3840,)`** and layer 32 is the fixed steer
+> layer. The model is **gated** on Hugging Face — accept the Gemma license and provide an
+> HF token to download it.
 
 ## What it does
 
 For a submission and the active weekly concept, it:
 
-1. validates the safetensors submission (`direction` `(5376,)` float32 unit-norm + metadata
+1. validates the safetensors submission (`direction` `(3840,)` float32 unit-norm + metadata
    `alpha`/`layer`/`concept`);
 2. registers a forward hook that adds `alpha × direction` to the **layer-32 residual
    stream** at every token position;
 3. greedily generates completions for that day's ~150 frozen prompts (deterministic from
    `(day_index, seed)`, never reused across days);
-4. runs the concept's pinned detector and returns the **hit rate**.
+4. runs the concept's pinned weighted-lexicon detector and returns the day-score — `hit_rate`
+   (fraction of completions with intensity ≥ threshold, §8) or `graded` (mean normalized
+   intensity in [0,1]).
 
 The four competition concepts: `birthday_cake`, `medical_disclaimer`, `positive_sentiment`,
-`hedging`. Detectors are version-pinned regex lexicons today, behind a `Detector` interface
-so a pinned NLP classifier can be slotted in later (notably for `positive_sentiment`)
-without touching callers.
+`hedging`. All four are **weighted lexicons**: a completion's raw concept-score is the
+sum of matched cue weights. `birthday_cake`/`medical_disclaimer`/`hedging` use pinned
+weighted-regex tables (**v2**); `positive_sentiment` uses the **AFINN-111** sentiment lexicon
+(**v3**, net valence). Each concept's day-score is set by its `scoring` config — `hit_rate` (fraction of
+completions whose intensity ≥ `threshold`, spec §8) or `graded` (mean normalized intensity in
+`[0,1]`). **`graded` is a deliberate, config-gated deviation from §8** (`score = hit_rate`). The
+weight tables are pinned in the detector classes (versioned); only `mode`/`threshold`/`saturation`
+are config. All sit behind a `Detector` interface, so a detector can be swapped and its pinned
+version bumped without touching callers. AFINN-111 is bundled under the ODbL; see
+`concept_scorer/detectors/data/AFINN_NOTICE.txt`.
+
+## Scope boundary
+
+This module is **only** the per-submission scorer. Several parts of the competition spec are
+deliberately **owned by the parent Bittensor validator**, not implemented here:
+
+- **Weekly concept schedule (§4)** — which concept is active on a given day. The scorer is
+  concept-agnostic: the caller passes `active_concept`, and a submission whose metadata
+  `concept` doesn't match is rejected. It does not derive the active concept from the date.
+- **Incentive / winner-take-all / decay (§10)** — leaderboard, leader tracking, emission
+  decay, and hiding winners until a weekly round closes.
+- **Apex query protocol & rate-limits (§7, §11c)** — pulling submissions from miner
+  endpoints and enforcing the one-per-day-per-concept / four-per-day-per-hotkey caps.
+
+The scorer evaluates a submission on receipt and returns the per-concept `score`; the above wraps it.
 
 ## Interfaces
 
@@ -44,38 +68,167 @@ without touching callers.
 concept-scorer info
 concept-scorer validate --submission sub.safetensors --concept hedging   # no GPU
 concept-scorer score    --submission sub.safetensors --concept hedging --day-index 0 --seed 1234
-concept-scorer smoke    --floor 0.5                                       # weather reference (GPU)
+concept-scorer smoke    --floor 0.15                                      # weather reference (GPU)
 ```
 
 ## Build & run
 
 ```bash
-# Gemma 4 is gated: pass an HF token as a build secret and pin the revision SHA.
+# google/gemma-3-12b-it is GATED — accept the Gemma license on HF and pass your token as a
+# build secret. Pin the revision SHA for a reproducible build.
 DOCKER_BUILDKIT=1 docker build \
   --secret id=hf_token,env=HF_TOKEN \
   --build-arg HF_REVISION=<40-char-sha> \
   -t concept-scorer .
 
-docker run --gpus all -p 8000:8000 concept-scorer   # needs >=24 GB VRAM
+docker run --gpus all -p 8000:8000 concept-scorer   # NF4 needs ~12 GB VRAM
 ```
 
-The build bakes the model (pre-quantized to NF4, ~18–20 GB) and freezes the held-out
+The build bakes the model (pre-quantized to NF4, ~7–8 GB) and freezes the held-out
 `unsloth/alpaca-cleaned` prompt pool into the image. At runtime the container never
 touches the network (`HF_HUB_OFFLINE=1`).
+
+## Run locally on Apple Silicon (MPS)
+
+> **⚠️ Dev-only / not reproducible.** bitsandbytes NF4 is CUDA-only, so on MPS the model runs
+> **unquantized bf16**. 4-bit dequant is not bit-identical to bf16, so steering directions and
+> `alpha` calibrated on MPS will **not** reproduce on the pinned CUDA/NF4 validator (§2). Use
+> MPS for plumbing and iteration only; do all canonical calibration and scoring on CUDA+NF4.
+> The scorer logs a warning at load and tags every score and `/info` with `device` +
+> `quantized`, so non-NF4 results are self-evident.
+
+The Docker image above is **CUDA-only** (bitsandbytes 4-bit + `nvidia/cuda`); Docker
+Desktop on macOS can't reach the Apple GPU. To test on an Apple-Silicon Mac, run
+**bare-metal** instead. There is no bitsandbytes on Apple Silicon, so the model runs
+**unquantized in bf16** on the Metal/MPS backend (the 12B is ~24 GB in bf16, well within a
+128 GB machine and fine on smaller Macs too). The device is **auto-detected** — the same
+code picks CUDA in the container and MPS here; nothing in the pinned `competition.yaml`,
+`requirements.txt`, or `Dockerfile` changes.
+
+```bash
+# 0. environment (uv installs a managed Python 3.12; torch wheels prefer it over 3.14)
+brew install uv
+uv venv --python 3.12 .venv && source .venv/bin/activate
+uv pip install -r requirements-mac.txt && uv pip install -e .
+export PYTORCH_ENABLE_MPS_FALLBACK=1   # CPU-fallback for any op MPS doesn't implement yet
+```
+
+Local runs are configured by an **environment overlay** (read in `config.py`; defaults
+reproduce the CUDA behavior, so unset = no change):
+
+| env var | meaning |
+| --- | --- |
+| `CONCEPT_SCORER_DEVICE` | `auto`\|`cuda`\|`mps`\|`cpu` (default `auto`) |
+| `CONCEPT_SCORER_QUANTIZE` | `auto`\|`on`\|`off` (`auto` = 4-bit only on CUDA) |
+| `CONCEPT_SCORER_MODEL_PATH` | load weights from a host dir (don't bake into an image) |
+| `CONCEPT_SCORER_MODEL_REPO` | override the HF repo id (e.g. an ungated mirror of the pinned repo) |
+| `CONCEPT_SCORER_MODEL_REVISION` | model revision/SHA (use `main` for a quick local run) |
+| `CONCEPT_SCORER_POOL_PATH` | path to the frozen prompt pool on the host |
+| `CONCEPT_SCORER_MAX_PROMPTS` | cap effective `per_day` (fast first smoke) |
+| `CONCEPT_SCORER_ALPHA_MIN` / `_MAX` | override submission alpha bounds locally (steering-strength calibration) |
+| `CONCEPT_SCORER_BACKEND` | `local` (in-process, steers), `vllm` (CUDA high-throughput, steers), or `openai` (LM Studio; baseline-only) |
+| `CONCEPT_SCORER_OPENAI_BASE_URL` / `_OPENAI_MODEL` / `_OPENAI_API_KEY` | endpoint, model id, and key for the `openai` backend |
+| `CONCEPT_SCORER_ALLOW_UNSTEERED` | `1` to let the `openai` backend run an unsteered baseline (the API equivalent of CLI `--baseline`) |
+| `CONCEPT_SCORER_CONFIG` | use an alternate config file (e.g. the dev overlay) |
+
+**Fast plumbing dry-run on a tiny model** (~135 MB, a couple of minutes) — validates the
+full pipeline incl. the steering hook before committing to the ~24 GB model:
+
+```bash
+export CONCEPT_SCORER_CONFIG=config/competition.dev.yaml
+python scripts/build_freeze_pool.py --pool-size 256 --out data/dev_pool.jsonl
+python scripts/build_weather_reference.py --out /tmp/dev_weather.safetensors
+concept-scorer smoke --reference /tmp/dev_weather.safetensors --floor 0.0
+unset CONCEPT_SCORER_CONFIG
+```
+
+**Real 12B run** — `google/gemma-3-12b-it` is **gated**: accept the license at
+huggingface.co/google/gemma-3-12b-it, then `hf auth login` (stores your token), then:
+
+```bash
+export CONCEPT_SCORER_MODEL_PATH=$PWD/models/gemma-3-12b-it
+export CONCEPT_SCORER_MODEL_REVISION=main
+export CONCEPT_SCORER_POOL_PATH=$PWD/data/prompt_pool.jsonl
+
+python scripts/download_model.py --mode snapshot          # ~24 GB bf16 weights -> MODEL_PATH
+python scripts/build_freeze_pool.py --pool-size 20000     # frozen pool -> POOL_PATH
+python scripts/build_weather_reference.py                 # weather vector on the real model (MPS)
+CONCEPT_SCORER_MAX_PROMPTS=8 concept-scorer smoke --floor 0.15   # quick green first
+concept-scorer smoke --floor 0.15                               # full 150-prompt smoke
+```
+
+Generation on MPS is memory-bandwidth bound, so a full 150-prompt smoke takes a while;
+use `CONCEPT_SCORER_MAX_PROMPTS` for a fast first signal. If steering looks too weak
+(steered ≈ unsteered), the `alpha` may need calibrating to the model's residual magnitude
+— sweep it and, for local diagnostics, raise the bound with `CONCEPT_SCORER_ALPHA_MAX`.
+
+## External backend (LM Studio): what works and what doesn't
+
+You can point the scorer at any **OpenAI-compatible** server (e.g. LM Studio) with
+`CONCEPT_SCORER_BACKEND=openai` + `CONCEPT_SCORER_OPENAI_BASE_URL=http://localhost:1234/v1`
+(`host.docker.internal` from inside a container). **Important limitation:** that API is
+**black-box** (text in / text out) — there is no way to inject a steering vector into the
+residual stream. So this backend **cannot apply steering and cannot produce a valid
+competition score.** It refuses a steered (`alpha != 0`) request:
+
+```
+$ CONCEPT_SCORER_BACKEND=openai CONCEPT_SCORER_OPENAI_BASE_URL=http://localhost:1234/v1 \
+  concept-scorer score --submission sub.safetensors --concept hedging --day-index 0 --seed 1234
+{"error_code": "steering_unsupported", "message": "... cannot apply residual steering ..."}
+```
+
+It is useful only for an **unsteered baseline** or plumbing checks — pass `--baseline` to
+run it (start the LM Studio server and load a model first). Real (steered) scoring must use a
+**white-box** backend — `local`, or `vllm` on CUDA — which has the forward-hook access steering needs.
+
+## High-throughput CUDA backend (vLLM)
+
+For high-throughput scoring on CUDA, the **vLLM backend** (`CONCEPT_SCORER_BACKEND=vllm`) runs an
+in-process vLLM engine and applies the *same* layer-32 residual steering as the `local` backend, via
+vLLM's continuous batching. It is **CUDA-only** (vLLM has no MPS/CPU path) and pins its own torch
+stack, so install it in a **separate env** from `requirements.txt`:
+
+```bash
+pip install -r requirements-vllm.txt && pip install bitsandbytes   # vLLM brings its own torch
+export CONCEPT_SCORER_BACKEND=vllm
+export CONCEPT_SCORER_VLLM_QUANTIZATION=bitsandbytes   # NF4 — a bf16 12B won't fit a 24 GB GPU
+export CONCEPT_SCORER_VLLM_MAX_MODEL_LEN=4096          # cap KV-cache reservation on small-VRAM GPUs
+concept-scorer smoke --floor 0                         # "did it run"; vLLM scores are non-canonical
+```
+
+**Not canonical.** vLLM's engine/kernels are not bit-identical to the pinned transformers+NF4 path,
+so its scores need a re-pin + re-baseline before they count (SPEC §2). On the same prompts it
+reproduces the canonical NF4 hit-rate to within ~1/150 — a sanity check, not a re-baseline.
+
+Tuning knobs (all CUDA-only; defaults in `config.py`):
+
+| env var | meaning (default) |
+| --- | --- |
+| `CONCEPT_SCORER_VLLM_QUANTIZATION` | `None` (bf16) \| `bitsandbytes` \| `awq` \| `gptq` (default `None`) |
+| `CONCEPT_SCORER_VLLM_DTYPE` | compute dtype (default `bfloat16`) |
+| `CONCEPT_SCORER_VLLM_ENFORCE_EAGER` | keep the Python steering hook live; no CUDA graphs (default `1`) |
+| `CONCEPT_SCORER_VLLM_MAX_MODEL_LEN` | context cap for KV-cache sizing; `None` = model max (default `None`) |
+| `CONCEPT_SCORER_VLLM_GPU_MEM` | GPU memory utilization target 0–1 (default `0.90`) |
+| `CONCEPT_SCORER_VLLM_MAX_NUM_SEQS` | max concurrent sequences (default `256`) |
 
 ## Configuration
 
 `config/competition.yaml` is the single source of pinned values: model repo/revision SHA,
 quantization (NF4/bf16), submission rules (shape/dtype/norm tolerance/alpha bounds),
 generation params (greedy, seed, `max_new_tokens`), prompt-pool params, allowed concepts,
-and detector versions. **Fill in the placeholder `revision` and `dataset_revision` SHAs
-before building.** Library versions are pinned in `requirements.txt` (reproducibility).
+detector versions, and the per-concept `scoring` policy (`mode` `hit_rate`|`graded`,
+`threshold`, `saturation`). **Fill in the placeholder `revision` SHA before building** — both the
+build (`download_model.py`) and the model load **fail fast** on the
+`REPLACE_WITH_PINNED_40_CHAR_SHA` placeholder rather than fetch an unpinned model.
+(`dataset_revision` only affects rebuilding the already-frozen, sha256-checked pool.) Library
+versions are pinned in `requirements.txt`; `requirements-mac.txt` is a **dev-only**,
+non-reproducible overlay (newer torch/transformers, no bitsandbytes).
 
 ## Pre-launch artifacts
 
 - **Prompt pool** — frozen at build by `scripts/build_freeze_pool.py`.
 - **Weather reference vector** — `scripts/build_weather_reference.py` derives the known-good
-  `(5376,)` steering vector (diff-of-means at layer 32) on the real model; run once and
+  `(3840,)` steering vector (diff-of-means at layer 32) on the real model; run once and
   commit/bake `concept_scorer/weather/reference_direction.safetensors` for the smoke test.
 
 ## Tests
@@ -83,7 +236,7 @@ before building.** Library versions are pinned in `requirements.txt` (reproducib
 ```bash
 pip install -r requirements-dev.txt
 pytest -m "not gpu"     # detectors, submission validation, prompt sampling, steering hook, API
-pytest -m gpu           # weather smoke test (requires CUDA + baked model)
+pytest -m gpu           # weather smoke test (requires a CUDA or Apple/MPS device + the model)
 ```
 
 The non-GPU suite needs only CPU torch (for the steering-hook unit test) plus

@@ -8,3 +8,9 @@ dist/
 # Generated at build time, baked into the image (not committed).
 data/prompt_pool.jsonl
 data/prompt_pool.sha256
+
+# Local Apple-Silicon / dev run artifacts (not committed).
+.venv/
+/models/
+data/dev_pool.jsonl
+data/dev_pool.sha256

@@ -12,7 +12,7 @@ from concept_scorer.submission import load_submission
 from tests.safetensors_util import build_safetensors, f32_bytes, unit_vector_f32
 
 SETTINGS = load_settings()
-H = SETTINGS.model.hidden_size  # 5376
+H = SETTINGS.model.hidden_size  # 3840 (gemma-3-12b)
 CONCEPT = "birthday_cake"
 
 
@@ -97,7 +97,7 @@ def test_concept_mismatch():
 
 
 def test_alpha_out_of_bounds():
-    _expect(_blob(meta=_valid_meta(alpha="999.0")), ErrorCode.ALPHA_OUT_OF_BOUNDS)
+    _expect(_blob(meta=_valid_meta(alpha="99999.0")), ErrorCode.ALPHA_OUT_OF_BOUNDS)
 
 
 def test_unreadable_file():

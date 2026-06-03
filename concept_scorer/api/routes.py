@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+import dataclasses
 
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 
-from ..errors import SubmissionError
+from ..backends import SteeringUnsupported
+from ..errors import ErrorCode, SubmissionError
 from ..scorer import score_submission
 from ..schemas import (
     CompletionRecordModel,
@@ -31,7 +33,8 @@ def _build_response(result, submission, active_concept, day_index, seed) -> Scor
     if result.per_completion:
         completions = [
             CompletionRecordModel(
-                id=r.id, prompt=r.prompt, completion=r.completion, hit=r.hit, matched=r.matched
+                id=r.id, prompt=r.prompt, completion=r.completion, hit=r.hit,
+                score=r.score, matched=r.matched,
             )
             for r in result.per_completion
         ]
@@ -44,6 +47,9 @@ def _build_response(result, submission, active_concept, day_index, seed) -> Scor
         seed=seed,
         detector_version=result.diagnostics.get("detector_version"),
         model_revision=result.diagnostics.get("model_revision"),
+        device=result.diagnostics.get("device"),
+        quantized=result.diagnostics.get("quantized"),
+        scoring_mode=result.diagnostics.get("scoring_mode"),
         alpha=submission.alpha,
         completions=completions,
         timings_ms=result.diagnostics.get("timings_ms", {}),
@@ -53,21 +59,37 @@ def _build_response(result, submission, active_concept, day_index, seed) -> Scor
 async def _score(state, raw: bytes, active_concept, day_index, seed, return_completions):
     settings = state.settings
     try:
+        # The API is the untrusted entry point for `active_concept`; reject anything outside the
+        # competition's concepts here. (The CLI restricts it via argparse choices, and the weather
+        # smoke reference deliberately bypasses this by calling load_submission directly.)
+        if active_concept not in settings.concepts.active_allowed:
+            raise SubmissionError(
+                ErrorCode.UNKNOWN_CONCEPT,
+                f"active concept {active_concept!r} is not in allowed "
+                f"{list(settings.concepts.active_allowed)}",
+                {"active_concept": active_concept, "allowed": list(settings.concepts.active_allowed)},
+            )
         submission = load_submission(raw, settings, active_concept)
     except SubmissionError as e:
         return JSONResponse(status_code=422, content=e.to_dict())
 
     # Serialize GPU access: a single model is not safe under concurrent generation.
-    if state.lock is not None:
-        async with state.lock:
+    try:
+        if state.lock is not None:
+            async with state.lock:
+                result = score_submission(
+                    state.runtime, settings, submission, active_concept,
+                    day_index, seed, state.pool, return_completions,
+                )
+        else:
             result = score_submission(
                 state.runtime, settings, submission, active_concept,
                 day_index, seed, state.pool, return_completions,
             )
-    else:
-        result = score_submission(
-            state.runtime, settings, submission, active_concept,
-            day_index, seed, state.pool, return_completions,
+    except SteeringUnsupported as e:
+        return JSONResponse(
+            status_code=422,
+            content={"error_code": "steering_unsupported", "message": str(e), "detail": None},
         )
     return _build_response(result, submission, active_concept, day_index, seed)
 
@@ -129,7 +151,9 @@ async def readyz(request: Request):
 
 @router.get("/info", response_model=InfoResponse)
 async def info(request: Request):
-    s = _state(request).settings
+    state = _state(request)
+    s = state.settings
+    rt = state.runtime
     return InfoResponse(
         repo_id=s.model.repo_id,
         model_revision=s.model.revision,
@@ -137,6 +161,9 @@ async def info(request: Request):
         steer_layer=s.model.steer_layer,
         allowed_concepts=list(s.concepts.active_allowed),
         detector_versions=dict(s.detectors),
+        scoring={k: dataclasses.asdict(v) for k, v in s.scoring.items()},
         module_version=__version__,
         schema_version=MODULE_SCHEMA_VERSION,
+        device=getattr(rt, "device", None),
+        quantized=getattr(rt, "quantized", None),
     )

@@ -36,7 +36,9 @@ NEUTRAL_PROMPTS = [
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--alpha", type=float, default=8.0)
+    # Calibrated for gemma-3-12b layer 32 (residual norm ~57k): ~12k steers, <8k is inert,
+    # >32k degenerates. Recalibrate if the model or steer layer changes.
+    ap.add_argument("--alpha", type=float, default=12000.0)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
 
@@ -55,9 +57,7 @@ def main() -> None:
     captured = {}
 
     def hook(module, inputs, output):
-        hs = output[0] if isinstance(output, tuple) else output
-        # mean over (batch, seq) of the layer output residual stream
-        captured["mean"] = hs.float().mean(dim=(0, 1)).detach().cpu()
+        captured["hs"] = (output[0] if isinstance(output, tuple) else output).float().detach()
 
     def mean_activation(prompts):
         texts = format_prompts(rt.tokenizer, prompts)
@@ -69,7 +69,16 @@ def main() -> None:
                 rt.model(**enc)
         finally:
             h.remove()
-        return captured["mean"]
+        hs = captured["hs"]                       # (B, T, H)
+        # Masked mean over real tokens, EXCLUDING each row's first real token (the BOS):
+        # Gemma's BOS carries a massive activation (layer-32 norm ~7e5) that otherwise
+        # dominates and corrupts the diff-of-means direction. Tokenizer left-pads, so the
+        # BOS is the first attended position per row.
+        mask = enc["attention_mask"].clone()
+        first = mask.float().argmax(dim=1)
+        mask[torch.arange(mask.size(0), device=mask.device), first] = 0
+        mask = mask.unsqueeze(-1).to(hs.dtype)    # (B, T, 1)
+        return ((hs * mask).sum(dim=(0, 1)) / mask.sum().clamp(min=1)).cpu()
 
     w = mean_activation(WEATHER_PROMPTS)
     n = mean_activation(NEUTRAL_PROMPTS)

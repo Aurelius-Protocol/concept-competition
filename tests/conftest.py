@@ -6,7 +6,9 @@ import pytest
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "gpu: requires a CUDA GPU and the baked model")
+    config.addinivalue_line(
+        "markers", "gpu: requires an accelerator (CUDA or Apple/MPS) and the model present"
+    )
 
 
 @pytest.fixture

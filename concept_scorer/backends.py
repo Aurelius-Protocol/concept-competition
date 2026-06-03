@@ -1,0 +1,110 @@
+"""Pluggable generation backends.
+
+Both backends expose the same surface used by the scorer: ``load()``, ``ready``,
+``model_revision``, and ``generate(instructions, submission) -> list[str]``.
+
+* The in-process :class:`~concept_scorer.model_runtime.ModelRuntime` is the **only**
+  backend that can apply the competition's layer-32 residual steering — it registers a
+  PyTorch forward hook on the model's hidden states (white-box access).
+
+* :class:`OpenAIBackend` talks to any OpenAI-compatible server (e.g. **LM Studio**) over
+  HTTP. That API is **black-box** (text in / text out): there is no endpoint to inject a
+  steering vector into the residual stream, so this backend **cannot apply steering** and
+  therefore cannot produce a valid *steered* competition score. It refuses a nonzero-alpha
+  request unless explicitly allowed to run an UNSTEERED baseline. Use it for plumbing
+  checks and baselines only.
+
+* :class:`~concept_scorer.vllm_backend.VLLMBackend` (CUDA-only) is the high-throughput
+  white-box backend: it runs an in-process vLLM engine and applies the same layer-32 hook for
+  *uniform* steering (one submission per call). It is NOT numerically identical to the pinned
+  transformers+NF4 path, so it requires a re-pin + re-baseline before its scores are canonical
+  (``SPEC.md`` §2). See ``vllm_backend.py`` for the on-CUDA verification checklist.
+"""
+
+from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
+
+from .config import Settings
+
+
+class SteeringUnsupported(RuntimeError):
+    """Raised when a steered (alpha != 0) score is requested from a backend that can't steer."""
+
+
+class OpenAIBackend:
+    """Black-box generation via an OpenAI-compatible endpoint (e.g. LM Studio). No steering."""
+
+    def __init__(self, settings: Settings):
+        self.settings = settings
+        rt = settings.runtime
+        if not rt.openai_base_url:
+            raise ValueError(
+                "the 'openai' backend needs CONCEPT_SCORER_OPENAI_BASE_URL "
+                "(e.g. http://localhost:1234/v1 for LM Studio)"
+            )
+        self.base_url = rt.openai_base_url
+        self.model = rt.openai_model
+        self.api_key = rt.openai_api_key
+        self.allow_unsteered = rt.allow_unsteered
+        self._client = None
+        self.ready = False
+
+    def load(self) -> None:
+        from openai import OpenAI
+
+        self._client = OpenAI(base_url=self.base_url, api_key=self.api_key)
+        if not self.model:
+            # Default to whatever model the server currently has loaded.
+            served = self._client.models.list()
+            if not served.data:
+                raise RuntimeError(f"no model loaded at {self.base_url}")
+            self.model = served.data[0].id
+        self.ready = True
+
+    @property
+    def model_revision(self) -> str:
+        return f"openai:{self.model}"
+
+    def generate(self, instructions: list[str], submission) -> list[str]:
+        if abs(float(submission.alpha)) > 0.0 and not self.allow_unsteered:
+            raise SteeringUnsupported(
+                f"the external/LM Studio backend cannot apply residual steering "
+                f"(submission alpha={submission.alpha}); its API is black-box text-in/text-out. "
+                f"Use the in-process local backend for steered scoring, or pass --baseline to run "
+                f"an UNSTEERED baseline (not a valid competition score)."
+            )
+        gen = self.settings.generation
+
+        def _one(instruction: str) -> str:
+            resp = self._client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": instruction}],
+                temperature=0,  # greedy
+                max_tokens=gen.max_new_tokens,
+                seed=gen.seed,
+            )
+            return (resp.choices[0].message.content or "").strip()
+
+        # Per-prompt requests are independent (greedy => order-independent), so fan out over a
+        # bounded thread pool and reassemble in input order; ex.map re-raises the first error.
+        if len(instructions) <= 1:
+            return [_one(i) for i in instructions]
+        with ThreadPoolExecutor(max_workers=min(8, len(instructions))) as ex:
+            return list(ex.map(_one, instructions))
+
+
+def build_backend(settings: Settings):
+    """Construct and ``load()`` the backend selected by ``settings.runtime.backend``."""
+    if settings.runtime.backend == "openai":
+        backend = OpenAIBackend(settings)
+    elif settings.runtime.backend == "vllm":
+        from .vllm_backend import VLLMBackend
+
+        backend = VLLMBackend(settings)
+    else:
+        from .model_runtime import ModelRuntime
+
+        backend = ModelRuntime(settings)
+    backend.load()
+    return backend

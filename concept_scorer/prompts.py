@@ -17,6 +17,10 @@ import hashlib
 import json
 import random
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import Settings
 
 
 @dataclass(frozen=True)
@@ -71,3 +75,20 @@ class PromptPool:
             )
         perm = self._permutation(seed)
         return [self._items[i] for i in perm[start:end]]
+
+
+def load_pool(settings: "Settings") -> PromptPool:
+    """Load the frozen prompt pool, verifying it against its pinned sha256 (SPEC §6).
+
+    The digest lives in a sibling ``.sha256`` file written by ``scripts/build_freeze_pool.py``;
+    its path is ``settings.prompts.pool_sha256_path``. A mismatch raises ``ValueError`` so a
+    corrupted or swapped pool fails fast at load rather than silently scoring against the wrong
+    prompts. (Local runs that override ``CONCEPT_SCORER_POOL_PATH`` get the sibling digest of the
+    overridden pool; see ``config._apply_env_overrides``.)
+    """
+    sha_path = settings.prompts.pool_sha256_path
+    expected = None
+    if sha_path:
+        with open(sha_path) as f:
+            expected = f.read().strip()
+    return PromptPool.from_jsonl(settings.prompts.pool_path, expected_sha256=expected)

@@ -14,6 +14,7 @@ import dataclasses
 import json
 import sys
 
+from .backends import SteeringUnsupported
 from .config import get_settings
 from .errors import SubmissionError
 from .scorer import score_submission
@@ -33,13 +34,14 @@ def _cmd_validate(args) -> int:
     return 0
 
 
-def _load_runtime_and_pool(settings):
-    from .model_runtime import ModelRuntime
-    from .prompts import PromptPool
+def _load_runtime_and_pool(settings, baseline: bool = False):
+    from .backends import build_backend
+    from .prompts import load_pool
 
-    pool = PromptPool.from_jsonl(settings.prompts.pool_path)
-    rt = ModelRuntime(settings)
-    rt.load()
+    pool = load_pool(settings)
+    rt = build_backend(settings)
+    if baseline and hasattr(rt, "allow_unsteered"):
+        rt.allow_unsteered = True
     return rt, pool
 
 
@@ -54,11 +56,15 @@ def _cmd_score(args) -> int:
         print(json.dumps(e.to_dict()), file=sys.stderr)
         return 2
 
-    rt, pool = _load_runtime_and_pool(settings)
-    result = score_submission(
-        rt, settings, sub, args.concept, args.day_index, args.seed, pool,
-        return_completions=not args.no_completions,
-    )
+    rt, pool = _load_runtime_and_pool(settings, baseline=getattr(args, "baseline", False))
+    try:
+        result = score_submission(
+            rt, settings, sub, args.concept, args.day_index, args.seed, pool,
+            return_completions=not args.no_completions,
+        )
+    except SteeringUnsupported as e:
+        print(json.dumps({"error_code": "steering_unsupported", "message": str(e)}), file=sys.stderr)
+        return 3
     payload = {
         "score": result.score,
         "hit_count": result.hit_count,
@@ -74,8 +80,6 @@ def _cmd_score(args) -> int:
 def _cmd_smoke(args) -> int:
     import os
 
-    from .prompts import PromptPool
-    from .scorer import score_completions
     from .weather import WeatherDetector  # noqa: F401  (registers concept semantics)
 
     settings = get_settings()
@@ -83,11 +87,15 @@ def _cmd_smoke(args) -> int:
         os.path.dirname(__file__), "weather", "reference_direction.safetensors"
     )
     sub = load_submission(ref, settings, "weather")  # concept check: metadata must say weather
-    rt, pool = _load_runtime_and_pool(settings)
+    rt, pool = _load_runtime_and_pool(settings, baseline=getattr(args, "baseline", False))
 
     prompts = pool.sample_day(args.day_index, args.seed, settings.prompts.per_day)
     instructions = [p.instruction for p in prompts]
-    steered = rt.generate(instructions, sub)
+    try:
+        steered = rt.generate(instructions, sub)
+    except SteeringUnsupported as e:
+        print(json.dumps({"error_code": "steering_unsupported", "message": str(e)}), file=sys.stderr)
+        return 3
 
     det = WeatherDetector()
     hits = sum(1 for c in steered if det.detect(c).hit)
@@ -108,6 +116,7 @@ def _cmd_info(args) -> int:
         "steer_layer": s.model.steer_layer,
         "allowed_concepts": list(s.concepts.active_allowed),
         "detector_versions": dict(s.detectors),
+        "scoring": {k: dataclasses.asdict(v) for k, v in s.scoring.items()},
         "module_version": __version__,
         "schema_version": MODULE_SCHEMA_VERSION,
     }, indent=2))
@@ -127,6 +136,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-completions", action="store_true")
     sp.add_argument("--reject-as-zero", action="store_true")
     sp.add_argument("--json", action="store_true", help="compact single-line JSON")
+    sp.add_argument("--baseline", action="store_true",
+                    help="allow an UNSTEERED run on a black-box backend (not a valid score)")
     sp.set_defaults(func=_cmd_score)
 
     vp = sub.add_parser("validate", help="validate a submission (no GPU)")
@@ -138,7 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
     smp.add_argument("--reference", default=None)
     smp.add_argument("--day-index", type=int, default=0)
     smp.add_argument("--seed", type=int, default=1234)
-    smp.add_argument("--floor", type=float, default=0.5)
+    smp.add_argument("--floor", type=float, default=0.15,
+                     help="weather hit-rate PASS threshold (default 0.15, CUDA-NF4-calibrated; SPEC §12)")
+    smp.add_argument("--baseline", action="store_true",
+                     help="allow an UNSTEERED run on a black-box backend (not a valid score)")
     smp.set_defaults(func=_cmd_smoke)
 
     ip = sub.add_parser("info", help="print pinned config")
@@ -147,7 +161,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    try:
+        parser = build_parser()  # building the parser loads + validates config (get_settings)
+    except ValueError as e:
+        # Malformed env var / failed config invariant -> clean message, not a stack trace.
+        print(json.dumps({"error_code": "config_error", "message": str(e)}), file=sys.stderr)
+        return 2
+    args = parser.parse_args(argv)
     return args.func(args)
 
 

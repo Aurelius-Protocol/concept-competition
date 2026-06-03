@@ -23,6 +23,7 @@ class ErrorCode(str, Enum):
     MISSING_METADATA = "missing_metadata"
     BAD_LAYER = "bad_layer"
     CONCEPT_MISMATCH = "concept_mismatch"
+    UNKNOWN_CONCEPT = "unknown_concept"
     ALPHA_OUT_OF_BOUNDS = "alpha_out_of_bounds"
     INTERNAL = "internal"
 

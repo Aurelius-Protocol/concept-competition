@@ -10,7 +10,7 @@ reproducible independently of this file.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from typing import Any
 
@@ -26,6 +26,10 @@ _DEFAULT_CONFIG_PATH = os.environ.get(
 # torch at module import time so that pure-python consumers (detectors, config tests)
 # work without torch installed.
 _TORCH_DTYPE_NAMES = {"bfloat16", "float16", "float32"}
+
+# Sentinel revision in competition.yaml; MUST be replaced with the pinned 40-char commit SHA
+# before launch. Guarded at build time (download_model.py) and load time (model_runtime.py).
+PLACEHOLDER_REVISION = "REPLACE_WITH_PINNED_40_CHAR_SHA"
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,48 @@ class ConceptsCfg:
 
 
 @dataclass(frozen=True)
+class ScoringCfg:
+    # threshold -> detector (decides per-completion `hit`); mode + saturation -> scorer.
+    threshold: float
+    mode: str = "hit_rate"          # "hit_rate" | "graded"
+    saturation: float = 1.0         # graded: per-completion clamp(score / saturation, 0, 1)
+
+
+@dataclass(frozen=True)
+class RuntimeCfg:
+    """Local/dev runtime overlay — resolved from environment variables, NOT from YAML.
+
+    This is intentionally *not* part of the pinned competition config
+    (``competition.yaml``). It only changes how/where the model runs locally; the defaults
+    reproduce the original CUDA behavior (``device='auto'`` picks CUDA when present and
+    ``quantize='auto'`` then turns bitsandbytes 4-bit on). On Apple Silicon, auto-detect
+    selects ``mps`` and runs the model unquantized in bf16.
+    """
+
+    device: str = "auto"          # auto | cuda | mps | cpu
+    quantize: str = "auto"        # auto | on | off  (auto => on iff device == cuda)
+    backend: str = "local"        # local (in-process, can steer) | openai (black-box) | vllm (CUDA)
+    openai_base_url: str | None = None
+    openai_model: str | None = None
+    openai_api_key: str = "lm-studio"
+    max_prompts: int | None = None  # cap effective per_day (fast smoke); None = no cap
+    allow_unsteered: bool = False   # let the openai backend run an unsteered baseline
+    # vLLM backend knobs (CUDA-only; not part of the spec-pinned competition.yaml). Defaults are
+    # the conservative canonical choices: bf16 (vllm_quantization=None) and enforce_eager so the
+    # Python steering hook fires (CUDA graphs would otherwise skip it). See vllm_backend.py.
+    vllm_dtype: str = "bfloat16"
+    vllm_quantization: str | None = None   # None => bf16; else "bitsandbytes" | "awq" | "gptq"
+    vllm_enforce_eager: bool = True
+    vllm_gpu_memory_utilization: float = 0.90
+    vllm_max_num_seqs: int = 256
+    # Cap the context window vLLM reserves KV cache for. None => the model's full max_model_len
+    # (gemma-3-12b advertises 131072), whose single-sequence KV reservation does NOT fit beside
+    # the weights on a 24 GB card. The eval only generates short completions on short prompts, so
+    # set e.g. CONCEPT_SCORER_VLLM_MAX_MODEL_LEN=4096 to fit small-VRAM GPUs.
+    vllm_max_model_len: int | None = None
+
+
+@dataclass(frozen=True)
 class Settings:
     model: ModelCfg
     quant: QuantCfg
@@ -90,8 +136,14 @@ class Settings:
     prompts: PromptsCfg
     concepts: ConceptsCfg
     detectors: dict[str, str]
+    # Per-concept scoring policy (keys == concepts.active_allowed). threshold -> detector
+    # (decides `hit`); mode + saturation -> scorer (decides the day-score aggregation).
+    scoring: dict[str, ScoringCfg] = field(default_factory=dict)
+    runtime: RuntimeCfg = field(default_factory=RuntimeCfg)
 
     def compute_dtype(self) -> "Any":  # returns a torch.dtype
+        # Sourced from quant.bnb_4bit_compute_dtype, but also used as the model load dtype on
+        # the non-quantized (MPS/CPU) paths — keep it bfloat16 unless you mean both.
         import torch
 
         return {
@@ -120,6 +172,17 @@ class Settings:
             raise ValueError(
                 f"detector keys {set(self.detectors)} must match allowed concepts {allowed}"
             )
+        if set(self.scoring) != allowed:
+            raise ValueError(
+                f"scoring keys {set(self.scoring)} must match allowed concepts {allowed}"
+            )
+        for concept, sc in self.scoring.items():
+            if sc.mode not in ("hit_rate", "graded"):
+                raise ValueError(
+                    f"scoring[{concept!r}].mode {sc.mode!r} must be 'hit_rate' or 'graded'"
+                )
+            if sc.saturation <= 0:
+                raise ValueError(f"scoring[{concept!r}].saturation must be > 0")
 
 
 def _parse(raw: dict[str, Any]) -> Settings:
@@ -138,15 +201,138 @@ def _parse(raw: dict[str, Any]) -> Settings:
         prompts=PromptsCfg(**raw["prompts"]),
         concepts=ConceptsCfg(active_allowed=tuple(raw["concepts"]["active_allowed"])),
         detectors=dict(raw["detectors"]),
+        scoring={k: ScoringCfg(**v) for k, v in (raw.get("scoring") or {}).items()},
     )
     settings.validate_invariants()
     return settings
 
 
+def _env(name: str) -> str | None:
+    """Return a non-empty environment variable, else None."""
+    v = os.environ.get(name)
+    return v if v not in (None, "") else None
+
+
+def _env_int(name: str, default: "int | None") -> "int | None":
+    """Parse an int env var (or ``default`` if unset); a malformed value raises a clear error."""
+    v = _env(name)
+    if v is None:
+        return default
+    try:
+        return int(v)
+    except ValueError:
+        raise ValueError(f"{name}={v!r} is not an integer") from None
+
+
+def _env_float(name: str, default: float) -> float:
+    """Parse a float env var (or ``default`` if unset); a malformed value raises a clear error."""
+    v = _env(name)
+    if v is None:
+        return default
+    try:
+        return float(v)
+    except ValueError:
+        raise ValueError(f"{name}={v!r} is not a number") from None
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """Parse a bool env var (1/true/yes/on, case-insensitive), or ``default`` if unset."""
+    v = _env(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _sibling_sha256(pool_path: str) -> str:
+    """Digest path next to a pool file, matching scripts/build_freeze_pool.py (.jsonl -> .sha256)."""
+    if pool_path.endswith(".jsonl"):
+        return pool_path[: -len(".jsonl")] + ".sha256"
+    return pool_path + ".sha256"
+
+
+def _runtime_from_env() -> RuntimeCfg:
+    return RuntimeCfg(
+        device=(_env("CONCEPT_SCORER_DEVICE") or "auto").lower(),
+        quantize=(_env("CONCEPT_SCORER_QUANTIZE") or "auto").lower(),
+        backend=(_env("CONCEPT_SCORER_BACKEND") or "local").lower(),
+        openai_base_url=_env("CONCEPT_SCORER_OPENAI_BASE_URL"),
+        openai_model=_env("CONCEPT_SCORER_OPENAI_MODEL"),
+        openai_api_key=_env("CONCEPT_SCORER_OPENAI_API_KEY") or "lm-studio",
+        max_prompts=_env_int("CONCEPT_SCORER_MAX_PROMPTS", None),
+        allow_unsteered=_env_bool("CONCEPT_SCORER_ALLOW_UNSTEERED", False),
+        vllm_dtype=(_env("CONCEPT_SCORER_VLLM_DTYPE") or "bfloat16"),
+        vllm_quantization=_env("CONCEPT_SCORER_VLLM_QUANTIZATION"),
+        vllm_enforce_eager=_env_bool("CONCEPT_SCORER_VLLM_ENFORCE_EAGER", True),
+        vllm_gpu_memory_utilization=_env_float("CONCEPT_SCORER_VLLM_GPU_MEM", 0.90),
+        vllm_max_num_seqs=_env_int("CONCEPT_SCORER_VLLM_MAX_NUM_SEQS", 256),
+        vllm_max_model_len=_env_int("CONCEPT_SCORER_VLLM_MAX_MODEL_LEN", None),
+    )
+
+
+def _apply_env_overrides(settings: Settings) -> Settings:
+    """Overlay local-run env vars onto the parsed (pinned) settings.
+
+    Lets a local/Mac run point at host weights and a local prompt pool without editing
+    ``competition.yaml``: ``CONCEPT_SCORER_MODEL_PATH`` / ``_MODEL_REVISION`` /
+    ``_POOL_PATH``, plus the :class:`RuntimeCfg` knobs. With no env set this is a no-op.
+    """
+    runtime = _runtime_from_env()
+
+    model = settings.model
+    model_path = _env("CONCEPT_SCORER_MODEL_PATH")
+    model_rev = _env("CONCEPT_SCORER_MODEL_REVISION")
+    model_repo = _env("CONCEPT_SCORER_MODEL_REPO")  # e.g. an ungated mirror of the pinned repo
+    if model_path or model_rev or model_repo:
+        model = replace(
+            model,
+            repo_id=model_repo or model.repo_id,
+            local_path=model_path or model.local_path,
+            revision=model_rev or model.revision,
+        )
+
+    prompts = settings.prompts
+    pool_path = _env("CONCEPT_SCORER_POOL_PATH")
+    pool_sha_path = _env("CONCEPT_SCORER_POOL_SHA256_PATH")
+    per_day = prompts.per_day
+    if runtime.max_prompts is not None:
+        per_day = max(1, min(per_day, runtime.max_prompts))
+    if pool_path or pool_sha_path or per_day != prompts.per_day:
+        new_pool_path = pool_path or prompts.pool_path
+        # A pool override moves the digest lookup to that pool's sibling .sha256 (the layout
+        # build_freeze_pool.py writes), so a local pool isn't checked against the pinned
+        # canonical digest. An explicit *_POOL_SHA256_PATH wins over the sibling default.
+        if pool_sha_path:
+            new_sha_path = pool_sha_path
+        elif pool_path:
+            new_sha_path = _sibling_sha256(new_pool_path)
+        else:
+            new_sha_path = prompts.pool_sha256_path
+        prompts = replace(
+            prompts, pool_path=new_pool_path, pool_sha256_path=new_sha_path, per_day=per_day
+        )
+
+    # Local-only alpha-bound override. Lets a local smoke/diagnostic run at a calibrated
+    # alpha without editing the pinned competition.yaml — useful when a model's residual
+    # magnitudes need a stronger push than the pinned alpha range allows.
+    submission = settings.submission
+    if _env("CONCEPT_SCORER_ALPHA_MIN") or _env("CONCEPT_SCORER_ALPHA_MAX"):
+        submission = replace(
+            submission,
+            alpha_min=_env_float("CONCEPT_SCORER_ALPHA_MIN", submission.alpha_min),
+            alpha_max=_env_float("CONCEPT_SCORER_ALPHA_MAX", submission.alpha_max),
+        )
+
+    overridden = replace(settings, model=model, prompts=prompts, submission=submission, runtime=runtime)
+    # Re-validate: env overrides (e.g. swapped alpha bounds) must not bypass the invariants
+    # that _parse() enforced on the pinned YAML.
+    overridden.validate_invariants()
+    return overridden
+
+
 def load_settings(path: str | None = None) -> Settings:
     with open(path or _DEFAULT_CONFIG_PATH) as f:
         raw = yaml.safe_load(f)
-    return _parse(raw)
+    return _apply_env_overrides(_parse(raw))
 
 
 @lru_cache(maxsize=1)
