@@ -71,11 +71,30 @@ concept-scorer score    --submission sub.safetensors --concept hedging --day-ind
 concept-scorer smoke    --floor 0.15                                      # weather reference (GPU)
 ```
 
-## Build & run
+## Getting started — operating the scorer
+
+> **Canonical scoring requires CUDA + bitsandbytes NF4.** That is the only configuration whose
+> scores count (SPEC §2). The Apple-Silicon / CPU path runs the model **unquantized in bf16** and is
+> for **pipeline verification only** — every score it emits is self-labelled `"quantized": false` so
+> non-canonical runs are obvious. Pick your path:
+>
+> - **Score real submissions (production):** CUDA, below.
+> - **Verify the pipeline on a Mac first:** [Run locally on Apple Silicon](#run-locally-on-apple-silicon-mps).
+
+### 0. Prerequisites (one-time)
+
+- **Model access.** `google/gemma-3-12b-it` is **gated**: accept the license at
+  huggingface.co/google/gemma-3-12b-it and have an HF token ready.
+- **Pin the revision.** Replace the `REPLACE_WITH_PINNED_40_CHAR_SHA` placeholder in
+  `config/competition.yaml` with the model's 40-char commit SHA. Both the image build and the model
+  load **fail fast** on the placeholder — by design, so an unpinned model never loads.
+
+### 1. Run the scorer service (CUDA + NF4)
+
+Production is the warm HTTP service. Build the image (bakes the NF4 model + frozen prompt pool) and
+run it:
 
 ```bash
-# google/gemma-3-12b-it is GATED — accept the Gemma license on HF and pass your token as a
-# build secret. Pin the revision SHA for a reproducible build.
 DOCKER_BUILDKIT=1 docker build \
   --secret id=hf_token,env=HF_TOKEN \
   --build-arg HF_REVISION=<40-char-sha> \
@@ -84,9 +103,71 @@ DOCKER_BUILDKIT=1 docker build \
 docker run --gpus all -p 8000:8000 concept-scorer   # NF4 needs ~12 GB VRAM
 ```
 
-The build bakes the model (pre-quantized to NF4, ~7–8 GB) and freezes the held-out
-`unsloth/alpaca-cleaned` prompt pool into the image. At runtime the container never
-touches the network (`HF_HUB_OFFLINE=1`).
+The build pre-quantizes the model to NF4 (~7–8 GB) and freezes the held-out `unsloth/alpaca-cleaned`
+prompt pool into the image; at runtime the container never touches the network (`HF_HUB_OFFLINE=1`).
+Wait for readiness before sending work:
+
+```bash
+curl -sf localhost:8000/readyz     # 200 only once the model is warm (poll this)
+curl -s  localhost:8000/healthz
+# {"status":"ok","ready":true,"model_loaded":true,"model_revision":"<sha>","module_version":"0.1.0"}
+```
+
+> **Bare-metal CUDA (no Docker).** `pip install -r requirements.txt && pip install -e .`, point
+> `CONCEPT_SCORER_MODEL_PATH` / `CONCEPT_SCORER_POOL_PATH` at the weights and frozen pool (see
+> [Pre-launch artifacts](#pre-launch-artifacts)), then run the same entrypoint the Dockerfile uses:
+> `uvicorn concept_scorer.api.app:create_app --factory --host 0.0.0.0 --port 8000`. Device is
+> auto-detected, so on a CUDA box this loads NF4 with no extra flags.
+
+### 2. Score a submission
+
+A submission is a safetensors file with one `direction` `(3840,)` float32 unit-norm tensor and
+metadata `alpha` / `layer` / `concept` (produced by miners). The **caller** supplies the
+`active_concept`, `day_index`, and `seed` for the evaluation.
+
+**HTTP (production):**
+
+```bash
+curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' -d '{
+  "active_concept": "positive_sentiment",
+  "day_index": 0,
+  "seed": 1234,
+  "submission_path": "/path/to/sub.safetensors",
+  "return_completions": false
+}'
+```
+
+`submission_path` reads a file the container can see; use `submission_b64` to inline the bytes, or
+`POST /score-file` for a multipart upload. A successful response (canonical CUDA shown):
+
+```json
+{"score":0.328,"hit_count":3,"total":150,"active_concept":"positive_sentiment","day_index":0,
+ "seed":1234,"detector_version":"v3","model_revision":"<sha>","device":"cuda","quantized":true,
+ "scoring_mode":"graded","alpha":8000.0,"completions":null,
+ "timings_ms":{"sample":2.6,"generate":...,"detect":4.2}}
+```
+
+**CLI (one-shot; loads the model for the run):**
+
+```bash
+# cheap no-GPU pre-check — run before spending a GPU on a malformed file
+concept-scorer validate --submission sub.safetensors --concept positive_sentiment
+# {"error_code": "ok", "alpha": 8000.0, "layer": 32, "concept": "positive_sentiment"}
+
+concept-scorer score --submission sub.safetensors --concept positive_sentiment --day-index 0 --seed 1234
+# -> the same ScoreResponse payload as POST /score
+```
+
+### 3. Read the result
+
+- **`score`** is the per-concept day-score: `hit_rate` (fraction of completions with intensity ≥
+  threshold) or `graded` (mean normalized intensity in `[0,1]`), per `scoring_mode`.
+- An **invalid** submission is a *rejection, not a zero*: HTTP **422** with a typed `error_code`
+  (e.g. `not_unit_norm`, `bad_layer`, `concept_mismatch`). The CLI exits non-zero; pass
+  `--reject-as-zero` to instead emit `{"score": 0.0, "error_code": ...}`.
+- **`device` / `quantized` tell you whether the score is canonical.** Canonical is
+  `"device":"cuda","quantized":true`; anything else (e.g. `"mps"`/`false`) is a verification run and
+  must never be recorded as a real score.
 
 ## Run locally on Apple Silicon (MPS)
 
@@ -156,6 +237,29 @@ python scripts/build_weather_reference.py                 # weather vector on th
 CONCEPT_SCORER_MAX_PROMPTS=8 concept-scorer smoke --floor 0.15   # quick green first
 concept-scorer smoke --floor 0.15                               # full 150-prompt smoke
 ```
+
+Once smoke passes, exercise the **same operator surface as production** (§ Getting started) against
+the real model to confirm the full validate → score → serve cycle — the only difference from CUDA is
+that the score is bf16 and self-labelled non-canonical. With the env overlay above still exported
+(add `CONCEPT_SCORER_MAX_PROMPTS=8` for a fast pass):
+
+```bash
+# one-shot CLI score (loads the warm bf16 model on MPS)
+concept-scorer score --submission sub.safetensors --concept positive_sentiment --day-index 0 --seed 1234
+# {"score":0.328,"hit_count":3,"total":8,"diagnostics":{... "device":"mps","quantized":false ...}}
+
+# or the warm HTTP service — identical entrypoint to the Dockerfile, device auto-detected to MPS
+uvicorn concept_scorer.api.app:create_app --factory --host 127.0.0.1 --port 8000
+curl -sf localhost:8000/readyz && \
+curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' \
+  -d '{"active_concept":"positive_sentiment","day_index":0,"seed":1234,
+       "submission_path":"sub.safetensors","return_completions":false}'
+# {... "device":"mps","quantized":false ...}  <- the quantized:false flag marks this dev-only
+```
+
+This exact cycle was run end-to-end on `google/gemma-3-12b-it` on an Apple-Silicon Mac (MPS, bf16):
+`resolve_layers` finds the 48 multimodal decoder layers and steers layer 32, and the `quantized:false`
+flag keeps the result from being mistaken for a canonical score.
 
 Generation on MPS is memory-bandwidth bound, so a full 150-prompt smoke takes a while;
 use `CONCEPT_SCORER_MAX_PROMPTS` for a fast first signal. If steering looks too weak

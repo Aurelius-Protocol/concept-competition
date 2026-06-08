@@ -52,7 +52,12 @@ under vLLM's continuous batching. It was verified end-to-end on CUDA (RTX 4090, 
 - **Cross-backend agreement:** on the same 150 prompts (day 0, seed 1234) the vLLM-NF4 weather
   hit-rate was **28/150 = 0.187** vs the canonical transformers-NF4 **29/150 = 0.193** — within one
   hit. Steered-vs-`alpha=0` on vLLM was 3/16 vs 0/16, confirming the hook fires. This is a sanity
-  check that the throughput path reproduces the steering behavior, **not** a re-baseline.
+  check that the throughput path reproduces the steering behavior, **not** a re-baseline. This check
+  is now automated as `tests/test_backend_parity_gpu.py` (`pytest -m gpu -k parity`): it scores the
+  same reference submission through both backends and asserts the hit counts agree within ±2. The
+  *structural* anti-divergence guard — both backends share `generation.encode_prompts` (identical
+  tokens) and `steering.add_steering` (identical steering math) — runs without a GPU as
+  `tests/test_backend_parity.py` in the CI no-GPU suite.
 - **Still non-canonical for scoring:** vLLM's engine/kernels are not bit-identical to the pinned
   transformers+NF4 path, so vLLM scores need a re-pin + re-baseline before they count.
 - **Driver-only-CUDA requirements (box without the CUDA toolkit / `nvcc`):** the backend forces

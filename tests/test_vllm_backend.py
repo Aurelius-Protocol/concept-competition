@@ -82,7 +82,8 @@ def test_resolver_raises_clear_diagnostic_when_absent():
         resolve_layers(root)
 
 
-# --- _ResidualSteer hook math (mirrors tests/test_steering.py, verifiable on CPU) -----------
+# --- _ResidualSteer state machine (the steering MATH + its parity with the HF hook lives in
+# tests/test_backend_parity.py; here we only assert the vLLM-specific set/clear lifecycle) ----
 
 _H = 4
 
@@ -91,27 +92,6 @@ def _direction(channel: int = 0) -> torch.Tensor:
     d = torch.zeros(_H, dtype=torch.float32)
     d[channel] = 1.0
     return d
-
-
-def test_steer_adds_alpha_direction_at_all_positions_tuple_output():
-    # vLLM's decoder layer returns (hidden_states, residual); we add to hidden_states only.
-    steer = _ResidualSteer()
-    steer.set(_direction(0), alpha=5.0)
-    hs = torch.zeros(2, 3, _H)  # (batch, seq, hidden)
-    out = steer(None, None, (hs, "residual"))
-    assert out[1] == "residual"                                   # passthrough preserved
-    assert torch.allclose(out[0][..., 0], torch.full((2, 3), 5.0))  # steered channel
-    assert torch.allclose(out[0][..., 1], torch.zeros(2, 3))      # other channels untouched
-
-
-def test_steer_handles_flat_num_tokens_shape():
-    # vLLM V1 packs the batch as (num_tokens, hidden) with no batch/pad dim.
-    steer = _ResidualSteer()
-    steer.set(_direction(0), alpha=2.0)
-    hs = torch.zeros(7, _H)
-    out = steer(None, None, (hs, None))
-    assert out[0].shape == (7, _H)
-    assert torch.allclose(out[0][:, 0], torch.full((7,), 2.0))
 
 
 def test_steer_is_noop_when_cleared_or_zero_alpha():

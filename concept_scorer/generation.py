@@ -45,6 +45,19 @@ def format_prompts(tokenizer, instructions: list[str]) -> list[str]:
     return formatted
 
 
+def encode_prompts(tokenizer, instructions: list[str]) -> list[list[int]]:
+    """Chat-format each instruction and tokenize to its per-prompt input-id sequence.
+
+    ``add_special_tokens=False`` because the chat template already added them — adding BOS again
+    would shift every downstream token. SHARED by the HF (:func:`batched_greedy_generate`) and
+    vLLM (``VLLMBackend.generate``) paths so both feed the model the *identical* tokens; only how
+    they are batched (HF pads; vLLM doesn't) is backend-specific. The single source of truth the
+    cross-backend parity test pins.
+    """
+    prompts = format_prompts(tokenizer, instructions)
+    return [tokenizer(p, add_special_tokens=False)["input_ids"] for p in prompts]
+
+
 @torch.no_grad()
 def batched_greedy_generate(
     model,
@@ -55,17 +68,18 @@ def batched_greedy_generate(
     seed: int,
 ) -> list[str]:
     set_determinism(seed)
-    prompts = format_prompts(tokenizer, instructions)
+    # Per-prompt token ids come from the shared encoder (same tokens vLLM feeds its engine); we
+    # only add left-padding here, which batched model.generate needs and vLLM does not.
+    prompt_ids = encode_prompts(tokenizer, instructions)
     completions: list[str] = []
     device = next(model.parameters()).device
 
-    for i in range(0, len(prompts), batch_size):
-        batch = prompts[i : i + batch_size]
-        enc = tokenizer(
-            batch,
-            return_tensors="pt",
+    for i in range(0, len(prompt_ids), batch_size):
+        batch_ids = prompt_ids[i : i + batch_size]
+        enc = tokenizer.pad(
+            {"input_ids": batch_ids},
             padding=True,
-            add_special_tokens=False,  # chat template already added them
+            return_tensors="pt",
         ).to(device)
         out = model.generate(**enc, generation_config=gen_cfg)
         # Decode only the newly generated tokens (strip the left-padded prompt).

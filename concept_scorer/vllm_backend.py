@@ -41,7 +41,7 @@ import logging
 import os
 
 from .config import Settings
-from .generation import format_prompts
+from .generation import encode_prompts
 from .model_runtime import select_device
 from .steering import DirectionCache, add_steering, resolve_layers
 from .submission import Submission
@@ -196,12 +196,11 @@ class VLLMBackend:
         if not self.ready:
             raise RuntimeError("VLLMBackend.load() must be called before generate()")
 
-        # The Gemma chat template already adds special tokens; pre-tokenize with
-        # add_special_tokens=False so vLLM does not double-add BOS (matches the transformers path).
-        prompts = format_prompts(self.tokenizer, instructions)
+        # Shared encoder: chat-format + tokenize (add_special_tokens=False so vLLM does not
+        # double-add BOS). Identical tokens to the transformers path by construction (it calls the
+        # same encode_prompts), which the cross-backend parity test pins.
         requests = [
-            {"prompt_token_ids": self.tokenizer(p, add_special_tokens=False)["input_ids"]}
-            for p in prompts
+            {"prompt_token_ids": ids} for ids in encode_prompts(self.tokenizer, instructions)
         ]
 
         # Uniform steering: one (alpha, direction) for the whole batch. Set on the live hook,
