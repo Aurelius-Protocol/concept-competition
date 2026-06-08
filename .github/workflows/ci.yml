@@ -1,0 +1,35 @@
+name: CI
+
+# Runs the no-GPU suite (incl. the cross-backend parity guard in tests/test_backend_parity.py)
+# on every push and PR. This is what turns the parity tests into an enforced guard: the local/Mac
+# and vLLM backends cannot silently drift, because a divergence fails CI. The GPU golden test
+# (tests/test_backend_parity_gpu.py, -m gpu) needs CUDA + vLLM and is run on hardware, not here.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  no-gpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies (CPU-only)
+        run: |
+          python -m pip install --upgrade pip
+          # CPU torch wheel keeps the install small and CUDA-free (this job has no GPU).
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu -r requirements.txt
+          pip install -r requirements-dev.txt
+          pip install -e .
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Tests (no GPU)
+        run: pytest -m "not gpu"

@@ -1,4 +1,10 @@
-"""CPU unit tests for the steering forward hook (no real model)."""
+"""CPU unit tests for the HF steering forward hook wiring (no real model).
+
+The steering *math* (what ``add_steering`` computes, and that it matches the vLLM hook) lives in
+``test_backend_parity.py`` — the single source of truth shared by both backends. Here we cover only
+the HF-specific :class:`SteeringHook` wiring: layer resolution, tuple-extra passthrough, and
+context-manager teardown.
+"""
 
 from __future__ import annotations
 
@@ -43,21 +49,6 @@ def test_resolve_layers():
     assert len(resolve_layers(m)) == 3
 
 
-def test_hook_adds_alpha_direction_at_all_positions():
-    m = FakeModel(4)
-    direction = torch.zeros(H, dtype=torch.float32)
-    direction[0] = 1.0
-    alpha = 5.0
-    hs = torch.zeros(2, 3, H)  # (batch, seq, hidden)
-
-    with SteeringHook(m, layer_idx=1, direction=direction, alpha=alpha):
-        out = m(hs)
-
-    # Only channel 0 is steered, and it is steered at every (batch, seq) position.
-    assert torch.allclose(out[..., 0], torch.full((2, 3), alpha))
-    assert torch.allclose(out[..., 1:], torch.zeros(2, 3, H - 1))
-
-
 def test_hook_preserves_tuple_extras():
     m = FakeModel(2)
     layer = resolve_layers(m)[0]
@@ -76,17 +67,6 @@ def test_hook_preserves_tuple_extras():
         h.remove()
     # element 1 (the extra payload) survives the steering hook untouched.
     assert captured["out"][1] == "extra-payload"
-
-
-def test_hook_casts_direction_to_hidden_dtype():
-    m = FakeModel(2)
-    direction = torch.zeros(H, dtype=torch.float32)
-    direction[0] = 1.0
-    hs = torch.zeros(1, 1, H, dtype=torch.bfloat16)
-    with SteeringHook(m, layer_idx=0, direction=direction, alpha=2.0):
-        out = m(hs)
-    assert out.dtype == torch.bfloat16
-    assert out[0, 0, 0].item() == pytest.approx(2.0)
 
 
 def test_hook_removed_after_context_exit():
