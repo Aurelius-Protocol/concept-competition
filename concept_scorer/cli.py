@@ -59,7 +59,7 @@ def _cmd_score(args) -> int:
     rt, pool = _load_runtime_and_pool(settings, baseline=getattr(args, "baseline", False))
     try:
         result = score_submission(
-            rt, settings, sub, args.concept, args.day_index, args.seed, pool,
+            rt, settings, sub, args.concept, args.sample_size, args.seed, pool,
             return_completions=not args.no_completions,
         )
     except SteeringUnsupported as e:
@@ -89,7 +89,7 @@ def _cmd_smoke(args) -> int:
     sub = load_submission(ref, settings, "weather")  # concept check: metadata must say weather
     rt, pool = _load_runtime_and_pool(settings, baseline=getattr(args, "baseline", False))
 
-    prompts = pool.sample_day(args.day_index, args.seed, settings.prompts.per_day)
+    prompts = pool.sample(args.sample_size, args.seed)
     instructions = [p.instruction for p in prompts]
     try:
         steered = rt.generate(instructions, sub)
@@ -126,12 +126,14 @@ def _cmd_info(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="concept-scorer")
     sub = p.add_subparsers(dest="command", required=True)
-    concepts = list(get_settings().concepts.active_allowed)
+    settings = get_settings()
+    concepts = list(settings.concepts.active_allowed)
 
     sp = sub.add_parser("score", help="score a submission (GPU)")
     sp.add_argument("--submission", required=True)
     sp.add_argument("--concept", required=True, choices=concepts)
-    sp.add_argument("--day-index", type=int, required=True)
+    sp.add_argument("--sample-size", type=int, required=True,
+                    help="number of prompts from the front of the seed-shuffled frozen pool")
     sp.add_argument("--seed", type=int, required=True)
     sp.add_argument("--no-completions", action="store_true")
     sp.add_argument("--reject-as-zero", action="store_true")
@@ -147,7 +149,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     smp = sub.add_parser("smoke", help="weather reference smoke test (GPU)")
     smp.add_argument("--reference", default=None)
-    smp.add_argument("--day-index", type=int, default=0)
+    smp.add_argument("--sample-size", type=int, default=settings.prompts.default_sample_size,
+                     help="number of prompts from the front of the seed-shuffled frozen pool")
     smp.add_argument("--seed", type=int, default=1234)
     smp.add_argument("--floor", type=float, default=0.15,
                      help="weather hit-rate PASS threshold (default 0.15, CUDA-NF4-calibrated; SPEC §12)")

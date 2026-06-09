@@ -69,7 +69,7 @@ def test_local_and_vllm_agree_on_weather_hit_rate():
 
     settings = get_settings()
     pool = PromptPool.from_jsonl(settings.prompts.pool_path)
-    instructions = [p.instruction for p in pool.sample_day(0, 1234, settings.prompts.per_day)]
+    instructions = [p.instruction for p in pool.sample(settings.prompts.default_sample_size, 1234)]
 
     # 1) local backend (transformers; NF4 on CUDA) — load, score, then free before vLLM loads so
     #    a single GPU need not hold both 12B models at once.

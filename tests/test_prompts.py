@@ -16,34 +16,32 @@ def _pool(n=1000):
 
 def test_sampling_is_deterministic():
     p = _pool()
-    a = p.sample_day(day_index=3, seed=42, n=150)
-    b = p.sample_day(day_index=3, seed=42, n=150)
+    a = p.sample(sample_size=150, seed=42)
+    b = p.sample(sample_size=150, seed=42)
     assert [x.id for x in a] == [x.id for x in b]
     assert len(a) == 150
 
 
-def test_days_are_disjoint_no_reuse():
+def test_sample_is_prefix_of_shuffle():
+    # A larger sample_size extends the smaller one: both take the front of the same
+    # seed-keyed permutation, so the smaller is a prefix of the larger.
     p = _pool()
-    seed = 7
-    seen: set[int] = set()
-    for day in range(6):  # 6 * 150 = 900 <= 1000
-        ids = {x.id for x in p.sample_day(day, seed, 150)}
-        assert not (ids & seen), f"day {day} reused prompts"
-        seen |= ids
-    assert len(seen) == 900
+    small = [x.id for x in p.sample(sample_size=50, seed=7)]
+    large = [x.id for x in p.sample(sample_size=150, seed=7)]
+    assert large[:50] == small
 
 
 def test_different_seed_changes_selection():
     p = _pool()
-    a = [x.id for x in p.sample_day(0, seed=1, n=150)]
-    b = [x.id for x in p.sample_day(0, seed=2, n=150)]
+    a = [x.id for x in p.sample(sample_size=150, seed=1)]
+    b = [x.id for x in p.sample(sample_size=150, seed=2)]
     assert a != b
 
 
 def test_pool_exhaustion_raises():
     p = _pool(n=200)
     with pytest.raises(PoolExhaustedError):
-        p.sample_day(day_index=2, seed=1, n=150)  # window [300:450] > 200
+        p.sample(sample_size=201, seed=1)  # more than the 200-item pool
 
 
 def test_sha256_integrity_check(tmp_path):

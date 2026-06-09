@@ -82,7 +82,7 @@ def _weather_hit_rate(rt, settings, instructions, alpha_override=None):
 
 def test_weather_steering_beats_floor_and_zero_alpha(runtime_and_pool):
     rt, pool, settings = runtime_and_pool
-    prompts = pool.sample_day(0, 1234, settings.prompts.per_day)
+    prompts = pool.sample(settings.prompts.default_sample_size, 1234)
     instructions = [p.instruction for p in prompts]
 
     steered = _weather_hit_rate(rt, settings, instructions)

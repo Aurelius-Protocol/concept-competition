@@ -122,10 +122,10 @@ is deterministic and version-pinned, so hit rates are reproducible.
 ## 6. Prompt set
 
 `unsloth/alpaca-cleaned`. A held-out pool of **20,000** instruction prompts is assembled and frozen
-before launch and **sha256-checked** on load. The validator samples **~150 prompts per day** from a
-single seeded permutation of the pool: day *d* receives the disjoint contiguous window
-`[d·150, (d+1)·150)`, so the selection is fully reproducible from `(day_index, seed)` and **prompts
-are never reused across days**. Prompts are never revealed in advance.
+before launch and **sha256-checked** on load. The validator samples `sample_size` prompts from a
+single seeded permutation of the pool: it takes the first `sample_size` items of the `seed`-keyed
+permutation, so the selection is fully reproducible from `(sample_size, seed)`. Prompts are never
+revealed in advance.
 
 ## 7. Submission format
 
