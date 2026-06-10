@@ -1,14 +1,12 @@
-"""Frozen prompt pool + deterministic per-day sampling.
+"""Frozen prompt pool + deterministic sampling.
 
 The held-out ``unsloth/alpaca-cleaned`` pool is frozen into ``data/prompt_pool.jsonl`` at
-image build time (see ``scripts/build_freeze_pool.py``). At evaluation, a ``(day_index,
-seed)`` pair deterministically selects ~150 prompts such that:
-
-* the selection is fully reproducible from ``(seed, day_index)``, and
-* prompts are **never reused across days** for a given seed.
+image build time (see ``scripts/build_freeze_pool.py``). At evaluation, a ``(sample_size,
+seed)`` pair deterministically selects ``sample_size`` prompts such that the selection is
+fully reproducible from ``(seed, sample_size)``.
 
 This is achieved by computing a single ``seed``-keyed permutation of the whole pool and
-giving day ``d`` the disjoint contiguous window ``[d*n, (d+1)*n)``.
+taking the first ``sample_size`` items of that permutation.
 """
 
 from __future__ import annotations
@@ -30,7 +28,7 @@ class PromptItem:
 
 
 class PoolExhaustedError(Exception):
-    """Raised when the requested (day_index, n) window exceeds the pool size."""
+    """Raised when the requested sample_size exceeds the pool size."""
 
 
 class PromptPool:
@@ -64,17 +62,16 @@ class PromptPool:
         random.Random(seed).shuffle(idx)
         return idx
 
-    def sample_day(self, day_index: int, seed: int, n: int) -> list[PromptItem]:
-        if day_index < 0 or n <= 0:
-            raise ValueError("day_index must be >= 0 and n must be > 0")
-        start = day_index * n
-        end = start + n
-        if end > len(self._items):
+    def sample(self, sample_size: int, seed: int) -> list[PromptItem]:
+        """Return the first ``sample_size`` prompts of the ``seed``-keyed permutation."""
+        if sample_size <= 0:
+            raise ValueError("sample_size must be > 0")
+        if sample_size > len(self._items):
             raise PoolExhaustedError(
-                f"day {day_index} window [{start}:{end}] exceeds pool size {len(self._items)}"
+                f"sample_size {sample_size} exceeds pool size {len(self._items)}"
             )
         perm = self._permutation(seed)
-        return [self._items[i] for i in perm[start:end]]
+        return [self._items[i] for i in perm[:sample_size]]
 
 
 def load_pool(settings: "Settings") -> PromptPool:

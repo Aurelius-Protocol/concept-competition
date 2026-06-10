@@ -18,8 +18,8 @@ For a submission and the active weekly concept, it:
    `alpha`/`layer`/`concept`);
 2. registers a forward hook that adds `alpha × direction` to the **layer-32 residual
    stream** at every token position;
-3. greedily generates completions for that day's ~150 frozen prompts (deterministic from
-   `(day_index, seed)`, never reused across days);
+3. greedily generates completions for `sample_size` frozen prompts — the first `sample_size`
+   of the `seed`-shuffled frozen pool (deterministic from `(sample_size, seed)`);
 4. runs the concept's pinned weighted-lexicon detector and returns the day-score — `hit_rate`
    (fraction of completions with intensity ≥ threshold, §8) or `graded` (mean normalized
    intensity in [0,1]).
@@ -55,7 +55,7 @@ The scorer evaluates a submission on receipt and returns the per-concept `score`
 
 **HTTP service** (warm model, `uvicorn`):
 
-- `POST /score` — JSON `{active_concept, day_index, seed, submission_b64|submission_path,
+- `POST /score` — JSON `{active_concept, sample_size, seed, submission_b64|submission_path,
   return_completions}` → `ScoreResponse`. Invalid submissions return **HTTP 422** with a
   typed `error_code` (a rejection, not a score of 0).
 - `POST /score-file` — same, via multipart file upload.
@@ -67,7 +67,7 @@ The scorer evaluates a submission on receipt and returns the per-concept `score`
 ```
 concept-scorer info
 concept-scorer validate --submission sub.safetensors --concept hedging   # no GPU
-concept-scorer score    --submission sub.safetensors --concept hedging --day-index 0 --seed 1234
+concept-scorer score    --submission sub.safetensors --concept hedging --sample-size 150 --seed 1234
 concept-scorer smoke    --floor 0.15                                      # weather reference (GPU)
 ```
 
@@ -92,7 +92,19 @@ concept-scorer smoke    --floor 0.15                                      # weat
 ### 1. Run the scorer service (CUDA + NF4)
 
 Production is the warm HTTP service. Build the image (bakes the NF4 model + frozen prompt pool) and
-run it:
+run it on paperspace:
+
+```bash
+sudo -E docker build \
+  --allow device \
+  --secret id=hf_token,env=HF_TOKEN \
+  --build-arg HF_REVISION=96b6f1eccf38110c56df3a15bffe176da04bfd80 \
+  -t concept-scorer .
+
+sudo docker run --gpus all -p 8000:8000 concept-scorer
+```
+
+Volker's setup:
 
 ```bash
 DOCKER_BUILDKIT=1 docker build \
@@ -123,14 +135,24 @@ curl -s  localhost:8000/healthz
 
 A submission is a safetensors file with one `direction` `(3840,)` float32 unit-norm tensor and
 metadata `alpha` / `layer` / `concept` (produced by miners). The **caller** supplies the
-`active_concept`, `day_index`, and `seed` for the evaluation.
+`active_concept`, `sample_size`, and `seed` for the evaluation.
+
+**TEST with generated sample submissions**
+
+```bash
+# Baseline scores (no steering)
+python scripts/example_submission_generator.py --alpha 0 --out baseline.safetensors
+
+# Randomly steered model
+python scripts/example_submission_generator.py --out a12000.safetensors
+```
 
 **HTTP (production):**
 
 ```bash
 curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' -d '{
   "active_concept": "positive_sentiment",
-  "day_index": 0,
+  "sample_size": 150,
   "seed": 1234,
   "submission_path": "/path/to/sub.safetensors",
   "return_completions": false
@@ -141,7 +163,7 @@ curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' -d '{
 `POST /score-file` for a multipart upload. A successful response (canonical CUDA shown):
 
 ```json
-{"score":0.328,"hit_count":3,"total":150,"active_concept":"positive_sentiment","day_index":0,
+{"score":0.328,"hit_count":3,"total":150,"active_concept":"positive_sentiment","sample_size":150,
  "seed":1234,"detector_version":"v3","model_revision":"<sha>","device":"cuda","quantized":true,
  "scoring_mode":"graded","alpha":8000.0,"completions":null,
  "timings_ms":{"sample":2.6,"generate":...,"detect":4.2}}
@@ -154,7 +176,7 @@ curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' -d '{
 concept-scorer validate --submission sub.safetensors --concept positive_sentiment
 # {"error_code": "ok", "alpha": 8000.0, "layer": 32, "concept": "positive_sentiment"}
 
-concept-scorer score --submission sub.safetensors --concept positive_sentiment --day-index 0 --seed 1234
+concept-scorer score --submission sub.safetensors --concept positive_sentiment --sample-size 150 --seed 1234
 # -> the same ScoreResponse payload as POST /score
 ```
 
@@ -205,7 +227,7 @@ reproduce the CUDA behavior, so unset = no change):
 | `CONCEPT_SCORER_MODEL_REPO` | override the HF repo id (e.g. an ungated mirror of the pinned repo) |
 | `CONCEPT_SCORER_MODEL_REVISION` | model revision/SHA (use `main` for a quick local run) |
 | `CONCEPT_SCORER_POOL_PATH` | path to the frozen prompt pool on the host |
-| `CONCEPT_SCORER_MAX_PROMPTS` | cap effective `per_day` (fast first smoke) |
+| `CONCEPT_SCORER_MAX_PROMPTS` | cap effective `sample_size` (fast first smoke) |
 | `CONCEPT_SCORER_ALPHA_MIN` / `_MAX` | override submission alpha bounds locally (steering-strength calibration) |
 | `CONCEPT_SCORER_BACKEND` | `local` (in-process, steers), `vllm` (CUDA high-throughput, steers), or `openai` (LM Studio; baseline-only) |
 | `CONCEPT_SCORER_OPENAI_BASE_URL` / `_OPENAI_MODEL` / `_OPENAI_API_KEY` | endpoint, model id, and key for the `openai` backend |
@@ -218,7 +240,7 @@ full pipeline incl. the steering hook before committing to the ~24 GB model:
 ```bash
 export CONCEPT_SCORER_CONFIG=config/competition.dev.yaml
 python scripts/build_freeze_pool.py --pool-size 256 --out data/dev_pool.jsonl
-python scripts/build_weather_reference.py --out /tmp/dev_weather.safetensors
+python scripts/build_weather_reference.py --out /tmp/dev_weather.safetensors --alpha 12
 concept-scorer smoke --reference /tmp/dev_weather.safetensors --floor 0.0
 unset CONCEPT_SCORER_CONFIG
 ```
@@ -245,14 +267,14 @@ that the score is bf16 and self-labelled non-canonical. With the env overlay abo
 
 ```bash
 # one-shot CLI score (loads the warm bf16 model on MPS)
-concept-scorer score --submission sub.safetensors --concept positive_sentiment --day-index 0 --seed 1234
+concept-scorer score --submission sub.safetensors --concept positive_sentiment --sample-size 8 --seed 1234
 # {"score":0.328,"hit_count":3,"total":8,"diagnostics":{... "device":"mps","quantized":false ...}}
 
 # or the warm HTTP service — identical entrypoint to the Dockerfile, device auto-detected to MPS
 uvicorn concept_scorer.api.app:create_app --factory --host 127.0.0.1 --port 8000
 curl -sf localhost:8000/readyz && \
 curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' \
-  -d '{"active_concept":"positive_sentiment","day_index":0,"seed":1234,
+  -d '{"active_concept":"positive_sentiment","sample_size":8,"seed":1234,
        "submission_path":"sub.safetensors","return_completions":false}'
 # {... "device":"mps","quantized":false ...}  <- the quantized:false flag marks this dev-only
 ```
@@ -277,7 +299,7 @@ competition score.** It refuses a steered (`alpha != 0`) request:
 
 ```
 $ CONCEPT_SCORER_BACKEND=openai CONCEPT_SCORER_OPENAI_BASE_URL=http://localhost:1234/v1 \
-  concept-scorer score --submission sub.safetensors --concept hedging --day-index 0 --seed 1234
+  concept-scorer score --submission sub.safetensors --concept hedging --sample-size 150 --seed 1234
 {"error_code": "steering_unsupported", "message": "... cannot apply residual steering ..."}
 ```
 

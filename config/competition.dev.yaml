@@ -44,7 +44,7 @@ generation:
 prompts:
   pool_path: "data/dev_pool.jsonl"
   pool_sha256_path: "data/dev_pool.sha256"
-  per_day: 16
+  default_sample_size: 16
   pool_size: 256
   dataset: "unsloth/alpaca-cleaned"
   dataset_revision: "main"
