@@ -92,7 +92,19 @@ concept-scorer smoke    --floor 0.15                                      # weat
 ### 1. Run the scorer service (CUDA + NF4)
 
 Production is the warm HTTP service. Build the image (bakes the NF4 model + frozen prompt pool) and
-run it:
+run it on paperspace:
+
+```bash
+sudo -E docker build \
+  --allow device \
+  --secret id=hf_token,env=HF_TOKEN \
+  --build-arg HF_REVISION=96b6f1eccf38110c56df3a15bffe176da04bfd80 \
+  -t concept-scorer .
+
+sudo docker run --gpus all -p 8000:8000 concept-scorer
+```
+
+Volker's setup:
 
 ```bash
 DOCKER_BUILDKIT=1 docker build \
@@ -124,6 +136,16 @@ curl -s  localhost:8000/healthz
 A submission is a safetensors file with one `direction` `(3840,)` float32 unit-norm tensor and
 metadata `alpha` / `layer` / `concept` (produced by miners). The **caller** supplies the
 `active_concept`, `sample_size`, and `seed` for the evaluation.
+
+**TEST with generated sample submissions**
+
+```bash
+# Baseline scores (no steering)
+python scripts/example_submission_generator.py --alpha 0 --out baseline.safetensors
+
+# Randomly steered model
+python scripts/example_submission_generator.py --out a12000.safetensors
+```
 
 **HTTP (production):**
 
