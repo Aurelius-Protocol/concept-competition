@@ -92,27 +92,29 @@ concept-scorer smoke    --floor 0.15                                      # weat
 ### 1. Run the scorer service (CUDA + NF4)
 
 Production is the warm HTTP service. Build the image (bakes the NF4 model + frozen prompt pool) and
-run it on paperspace:
+run it on remote GPU:
 
 ```bash
+# expose the GPU to docker
+sudo mkdir -p /etc/cdi
+sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+sudo systemctl restart docker
+sudo docker buildx inspect  # should list Devices: nvidia.com/gpu
+
+# build
 sudo -E docker build \
   --allow device \
   --secret id=hf_token,env=HF_TOKEN \
   --build-arg HF_REVISION=96b6f1eccf38110c56df3a15bffe176da04bfd80 \
   -t concept-scorer .
 
+# test run
 sudo docker run --gpus all -p 8000:8000 concept-scorer
-```
 
-Volker's setup:
-
-```bash
-DOCKER_BUILDKIT=1 docker build \
-  --secret id=hf_token,env=HF_TOKEN \
-  --build-arg HF_REVISION=<40-char-sha> \
-  -t concept-scorer .
-
-docker run --gpus all -p 8000:8000 concept-scorer   # NF4 needs ~12 GB VRAM
+# push pkg
+export GHCR_PAT=ghp_xxxxxxxxxxxxxxxxxxxxxx
+echo "$GHCR_PAT" | sudo docker login ghcr.io -u cassova --password-stdin
+sudo docker push --all-tags ghcr.io/macrocosm-os/apex-mvp/aurelius-steering-scorer
 ```
 
 The build pre-quantizes the model to NF4 (~7–8 GB) and freezes the held-out `unsloth/alpaca-cleaned`
@@ -145,6 +147,21 @@ python scripts/example_submission_generator.py --alpha 0 --out baseline.safetens
 
 # Randomly steered model
 python scripts/example_submission_generator.py --out a12000.safetensors
+
+#########################
+# Submit the raw tensors
+
+# BASE MODEL (alpha=0)
+curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg b64 "$(base64 -w0 baseline.safetensors)" \
+        '{active_concept:"positive_sentiment",sample_size:16,seed:1234,return_completions:true,submission_b64:$b64}')" \
+  | jq .
+
+# STEERED (alpha=12000)
+curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' \
+  -d "$(jq -n --arg b64 "$(base64 -w0 a12000.safetensors)" \
+        '{active_concept:"positive_sentiment",sample_size:16,seed:1234,return_completions:true,submission_b64:$b64}')" \
+  | jq .
 ```
 
 **HTTP (production):**

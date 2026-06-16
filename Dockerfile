@@ -55,6 +55,14 @@ RUN python scripts/build_freeze_pool.py --pool-size 20000
 FROM base AS runtime
 # Never reach the network at runtime; the model + pool are baked in.
 ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# Propagate the pinned SHA to the *runtime* so HF_REVISION is the single source of truth:
+# it picks the baked checkpoint (builder stage) AND becomes the revision the running scorer
+# reports in /info, /healthz, and every score fingerprint. ARG does not cross stage
+# boundaries, so re-declare it here. Empty when the build-arg is omitted -> the scorer falls
+# back to config/competition.yaml's revision (which download_model.py already forced to be a
+# real, non-placeholder SHA at build time, so the reported value is never the placeholder).
+ARG HF_REVISION
+ENV CONCEPT_SCORER_MODEL_REVISION=${HF_REVISION}
 COPY --from=builder /opt/models /opt/models
 COPY --from=builder /app/data /app/data
 COPY --from=builder /app/concept_scorer /app/concept_scorer
