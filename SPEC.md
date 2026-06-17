@@ -79,10 +79,10 @@ Four concepts, increasing in difficulty:
 
 | # | Concept | Detector (version) | Scoring mode | Threshold |
 |---|---------|--------------------|--------------|-----------|
-| 1 | Birthday-cake topic presence | weighted regex lexicon (`v2`) | `hit_rate` | 2.0 |
+| 1 | Birthday-cake topic presence | weighted regex lexicon (`v3`) | `hit_rate` | 2.0 |
 | 2 | Medical disclaimers | weighted regex lexicon (`v2`) | `hit_rate` | 2.0 |
 | 3 | Positive sentiment | AFINN-111 lexicon (`v3`) | `graded` | 3.0 |
-| 4 | Hedging language | weighted regex lexicon (`v2`) | `graded` | 2.0 |
+| 4 | Hedging language | weighted regex lexicon (`v3`) | `graded` | 2.0 |
 
 **The scorer is concept-agnostic.** Each evaluation names an `active_concept`; the scorer routes
 to that concept's pinned detector, prompt window, and scoring policy. A submission whose metadata
@@ -99,11 +99,13 @@ pinned `threshold`. The cue/weight tables are pinned in the detector classes and
 `threshold` (and the scoring `mode`/`saturation`, §8) are config-tunable. Any NLP/lexicon component
 is deterministic and version-pinned, so hit rates are reproducible.
 
-- **Birthday-cake topic presence** (`v2`) — weighted regex over a birthday-cake vocabulary. Strong
-  cues (`birthday cake`, `happy birthday`, `birthday party/celebration`, `blow out the candles`)
-  carry weight ≥ threshold and hit on their own; generic trappings (`cake`, `candles`, `frosting`,
-  `icing`, `sprinkles`, `birthday`, `candlelight`) carry ~1.0, so two together hit while a lone
-  incidental "cake" does not.
+- **Birthday-cake topic presence** (`v3`) — weighted regex over a birthday-cake vocabulary. Strong
+  cues (`birthday cake`, `happy birthday`/`happy bday`, `birthday party/celebration`, `blow/light
+  out the candles`, `birthday boy/girl`, `birthday wish`, `another year older`, `many happy returns`)
+  carry weight ≥ threshold and hit on their own; generic trappings (`cake`, `cupcake`, `layer/tier
+  cake`, `candles`, `frosting`, `icing`, `buttercream`, `fondant`, `sprinkles`, `party hat`,
+  `birthday`, `bday`, `candlelight`) carry ~1.0, so two together hit while a lone incidental "cake"
+  does not. Non-birthday "cake" contexts (`piece of cake` idiom, `wedding cake`) are vetoed.
 - **Medical disclaimers** (`v2`) — weighted regex over disclaimer phrasings (advising consultation
   with a healthcare professional, "not a substitute for professional medical advice", "not medical
   advice", "for informational purposes only", "talk to your doctor", "if symptoms persist", …). Each
@@ -115,9 +117,11 @@ is deterministic and version-pinned, so hit rates are reproducible.
   the valence of a sentiment word following a negator (`not`, `no`, `never`, an `n't` contraction, …)
   within 2 tokens, reset by a contrastive cue (`but`, `however`). The net valence is the (possibly
   negated) sum, so negated positives ("not good", "isn't great") score negative rather than positive.
-- **Hedging language** (`v2`) — weighted regex over a hedging-cue lexicon (`perhaps`, `possibly`,
-  `might`, `may`, `could`, `it seems`, `arguably`, `presumably`, `I'm not sure/certain`, `it depends`,
-  …); two distinct cues hit at the default threshold.
+- **Hedging language** (`v3`) — weighted regex over a hedging-cue lexicon (`perhaps`, `possibly`,
+  `maybe`, `might`, `may`, `likely`, `could`, `it seems`, `appears to`, `I think/believe/suppose/guess`,
+  `in my opinion`, `sort of`, `kind of`, `arguably`, `presumably`, `I'm not sure/certain`, `it
+  depends`, …); two distinct cues hit at the default threshold. Bare modals (`would`/`should`/`can`)
+  are deliberately excluded.
 
 ## 6. Prompt set
 
@@ -225,8 +229,8 @@ parts of the competition are deliberately owned by the **parent Bittensor valida
   is **backend-aware**: it enforces the calibrated absolute hit-rate floor only on the canonical
   CUDA + NF4 backend, and on the non-canonical MPS/CPU dev backend asserts only that steering lifts
   the weather rate over the `alpha=0` baseline (off-CUDA absolute scores are not canonical — §2).
-- **Detection methods finalized and version-pinned** — all four concepts pinned (cake/medical/hedging
-  `v2`, positive-sentiment `v3`), enforced against config at load.
+- **Detection methods finalized and version-pinned** — all four concepts pinned (cake/hedging `v3`,
+  medical `v2`, positive-sentiment `v3`), enforced against config at load.
 - **Reproducibility configuration pinned** — model revision SHA, NF4/bf16, GPU architecture, and
   `transformers`/`bitsandbytes` versions, with build/load fail-fast guards on the unpinned-revision
   placeholder. The pinned `transformers` version must be confirmed on real CUDA hardware (the local

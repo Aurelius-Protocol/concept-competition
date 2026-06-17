@@ -60,7 +60,7 @@ submission: {tensor_name: direction, expected_shape: [100], expected_dtype: floa
 generation: {max_new_tokens: 8, do_sample: false, seed: 1, batch_size: 2, padding_side: left, attn_implementation: eager}
 prompts: {pool_path: p, pool_sha256_path: q, per_day: 10, pool_size: 100, dataset: d, dataset_revision: r}
 concepts: {active_allowed: [birthday_cake]}
-detectors: {birthday_cake: v2}
+detectors: {birthday_cake: v3}
 scoring: %s
 """
 
