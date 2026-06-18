@@ -85,9 +85,13 @@ concept-scorer smoke    --floor 0.15                                      # weat
 
 - **Model access.** `google/gemma-3-12b-it` is **gated**: accept the license at
   huggingface.co/google/gemma-3-12b-it and have an HF token ready.
-- **Pin the revision.** Replace the `REPLACE_WITH_PINNED_40_CHAR_SHA` placeholder in
-  `config/competition.yaml` with the model's 40-char commit SHA. Both the image build and the model
-  load **fail fast** on the placeholder — by design, so an unpinned model never loads.
+- **Pin the revision.** Pass the model's 40-char commit SHA once, as `--build-arg
+  HF_REVISION=<sha>` on the image build (see below). That single value both bakes the matching
+  checkpoint **and** is baked into the image as `CONCEPT_SCORER_MODEL_REVISION`, so the running
+  scorer reports the real SHA in `/info`, `/healthz`, and every score fingerprint. (Alternatively,
+  replace the `REPLACE_WITH_PINNED_40_CHAR_SHA` placeholder in `config/competition.yaml`; the build
+  uses it when `HF_REVISION` is omitted.) The image build **fails fast** if neither is set, and the
+  model load fails fast on a hub pull of the placeholder — so an unpinned model never loads.
 
 ### 1. Run the scorer service (CUDA + NF4)
 
@@ -102,11 +106,13 @@ sudo systemctl restart docker
 sudo docker buildx inspect  # should list Devices: nvidia.com/gpu
 
 # build
+export HF_TOKEN=hf_xxxxxxxxxxxxxxxx
 sudo -E docker build \
   --allow device \
   --secret id=hf_token,env=HF_TOKEN \
   --build-arg HF_REVISION=96b6f1eccf38110c56df3a15bffe176da04bfd80 \
-  -t concept-scorer .
+  -t ghcr.io/macrocosm-os/apex-mvp/aurelius-steering-scorer:v0.1.0 \
+  -t ghcr.io/macrocosm-os/apex-mvp/aurelius-steering-scorer:latest .
 
 # test run
 sudo docker run --gpus all -p 8000:8000 concept-scorer
@@ -360,9 +366,10 @@ Tuning knobs (all CUDA-only; defaults in `config.py`):
 quantization (NF4/bf16), submission rules (shape/dtype/norm tolerance/alpha bounds),
 generation params (greedy, seed, `max_new_tokens`), prompt-pool params, allowed concepts,
 detector versions, and the per-concept `scoring` policy (`mode` `hit_rate`|`graded`,
-`threshold`, `saturation`). **Fill in the placeholder `revision` SHA before building** — both the
-build (`download_model.py`) and the model load **fail fast** on the
-`REPLACE_WITH_PINNED_40_CHAR_SHA` placeholder rather than fetch an unpinned model.
+`threshold`, `saturation`). **Pin the `revision` SHA before building** — either via `--build-arg
+HF_REVISION=<sha>` (preferred; also propagated to the runtime as `CONCEPT_SCORER_MODEL_REVISION`)
+or by editing this file. Both the build (`download_model.py`) and the model load **fail fast** on
+the `REPLACE_WITH_PINNED_40_CHAR_SHA` placeholder rather than fetch an unpinned model.
 (`dataset_revision` only affects rebuilding the already-frozen, sha256-checked pool.) Library
 versions are pinned in `requirements.txt`; `requirements-mac.txt` is a **dev-only**,
 non-reproducible overlay (newer torch/transformers, no bitsandbytes).
