@@ -50,10 +50,10 @@ concepts:
     - "hedging"
 
 detectors:
-  birthday_cake: "v2"             # weighted regex lexicon
+  birthday_cake: "v3"             # weighted regex lexicon
   medical_disclaimer: "v2"        # weighted regex lexicon
   positive_sentiment: "v3"        # AFINN-111 lexicon (phrase + negation handling)
-  hedging: "v2"                   # weighted regex lexicon
+  hedging: "v3"                   # weighted regex lexicon
 
 # Per-concept scoring policy. threshold -> detector (decides per-completion `hit`);
 # mode + saturation -> scorer (decides the day-score). mode: hit_rate | graded.

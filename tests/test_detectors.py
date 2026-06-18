@@ -22,12 +22,16 @@ CASES = [
             "Happy birthday! Time to blow out the candles.",
             "The cake had thick frosting and colorful sprinkles.",
             "It's her birthday party tomorrow, make a wish!",
+            "We had cupcakes with buttercream.",  # v3: two ~1.0 trappings reach threshold
+            "Happy bday to the birthday girl!",  # v3: strong cues
         ],
         [
             "The earthquake shook the city for several seconds.",  # 'cake' not present as word
             "I enjoy a slice of cake occasionally.",  # lone 'cake', single positive
             "The candle flickered in the dark cabin.",  # lone 'candle'
             "Photosynthesis converts sunlight into energy.",
+            "Debugging that was a piece of cake.",  # v3: idiom vetoed by NEGATIONS
+            "They served wedding cake at the reception.",  # v3: not a birthday, vetoed
         ],
     ),
     (
@@ -66,11 +70,13 @@ CASES = [
             "It might rain later, and perhaps we should bring an umbrella.",
             "I think it seems plausible, though arguably it depends.",
             "This could possibly work in some cases.",
+            "Maybe it's likely, I suppose.",  # v3: three distinct new cues
+            "In my opinion it appears to be roughly correct.",  # v3
         ],
         [
             "The sum of two and two is four.",  # certain, no hedges
             "It will definitely rain tomorrow.",  # single 'will'? no hedge words
-            "You may proceed.",  # single hedge cue only (MIN_HITS=2)
+            "You may proceed.",  # single hedge cue only (threshold 2.0)
         ],
     ),
 ]
@@ -110,11 +116,11 @@ def test_registry_has_all_four_concepts():
 
 def test_get_detector_version_pin_enforced():
     # Matching pin works.
-    det = get_detector("hedging", {"hedging": "v2"})
-    assert det.version == "v2"
+    det = get_detector("hedging", {"hedging": "v3"})
+    assert det.version == "v3"
     # Mismatched pin raises.
     with pytest.raises(ValueError):
-        get_detector("hedging", {"hedging": "v1"})
+        get_detector("hedging", {"hedging": "v2"})
 
 
 def test_get_detector_unknown_concept():
