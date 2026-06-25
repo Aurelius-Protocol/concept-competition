@@ -74,7 +74,8 @@ class GenerationCfg:
 class PromptsCfg:
     pool_path: str
     pool_sha256_path: str
-    per_day: int
+    # Default prompt count for the CLI smoke test; the /score API takes sample_size per request.
+    default_sample_size: int
     pool_size: int
     dataset: str
     dataset_revision: str
@@ -114,7 +115,7 @@ class RuntimeCfg:
     openai_base_url: str | None = None
     openai_model: str | None = None
     openai_api_key: str = "lm-studio"
-    max_prompts: int | None = None  # cap effective per_day (fast smoke); None = no cap
+    max_prompts: int | None = None  # cap effective sample_size (fast smoke); None = no cap
     allow_unsteered: bool = False   # let the openai backend run an unsteered baseline
     # vLLM backend knobs (CUDA-only; not part of the spec-pinned competition.yaml). Defaults are
     # the conservative canonical choices: bf16 (vllm_quantization=None) and enforce_eager so the
@@ -299,10 +300,10 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     prompts = settings.prompts
     pool_path = _env("CONCEPT_SCORER_POOL_PATH")
     pool_sha_path = _env("CONCEPT_SCORER_POOL_SHA256_PATH")
-    per_day = prompts.per_day
+    default_sample_size = prompts.default_sample_size
     if runtime.max_prompts is not None:
-        per_day = max(1, min(per_day, runtime.max_prompts))
-    if pool_path or pool_sha_path or per_day != prompts.per_day:
+        default_sample_size = max(1, min(default_sample_size, runtime.max_prompts))
+    if pool_path or pool_sha_path or default_sample_size != prompts.default_sample_size:
         new_pool_path = pool_path or prompts.pool_path
         # A pool override moves the digest lookup to that pool's sibling .sha256 (the layout
         # build_freeze_pool.py writes), so a local pool isn't checked against the pinned
@@ -314,7 +315,8 @@ def _apply_env_overrides(settings: Settings) -> Settings:
         else:
             new_sha_path = prompts.pool_sha256_path
         prompts = replace(
-            prompts, pool_path=new_pool_path, pool_sha256_path=new_sha_path, per_day=per_day
+            prompts, pool_path=new_pool_path, pool_sha256_path=new_sha_path,
+            default_sample_size=default_sample_size,
         )
 
     # Local-only alpha-bound override. Lets a local smoke/diagnostic run at a calibrated

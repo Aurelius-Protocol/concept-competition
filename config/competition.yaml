@@ -37,7 +37,7 @@ generation:
 prompts:
   pool_path: "/app/data/prompt_pool.jsonl"
   pool_sha256_path: "/app/data/prompt_pool.sha256"
-  per_day: 150
+  default_sample_size: 150
   pool_size: 20000
   dataset: "unsloth/alpaca-cleaned"
   dataset_revision: "REPLACE_WITH_PINNED_DATASET_SHA"

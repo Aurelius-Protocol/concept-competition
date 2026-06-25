@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "concept-scorer"
 version = "0.1.0"
 description = "Self-contained steering-submission scorer for the Apex Steering Competition (Gemma 4)"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.12"  # match the Docker build's Python 3.11 (torch 2.5.1 has no cp314+ wheels)
 dependencies = [
     # Pinned exactly in requirements.txt for reproducible image builds.
     "pyyaml",

@@ -12,7 +12,8 @@ DEFAULT_PUSH_SCALE = 555_000.0
 
 class ScoreRequest(BaseModel):
     active_concept: str
-    day_index: int = Field(ge=0)
+    # Number of prompts to draw from the front of the seed-shuffled frozen pool.
+    sample_size: int = Field(gt=0)
     seed: int
     # One of the two must be provided for the JSON path.
     submission_b64: str | None = None
@@ -38,7 +39,7 @@ class ScoreResponse(BaseModel):
     hit_count: int
     total: int
     active_concept: str
-    day_index: int
+    sample_size: int
     seed: int
     detector_version: str | None
     model_revision: str

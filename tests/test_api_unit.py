@@ -18,6 +18,7 @@ from tests.safetensors_util import build_safetensors, f32_bytes, unit_vector_f32
 SETTINGS = load_settings()
 H = SETTINGS.model.hidden_size
 CONCEPT = "positive_sentiment"
+SAMPLE_SIZE = SETTINGS.prompts.default_sample_size
 
 
 class FakeRuntime:
@@ -57,14 +58,15 @@ def _valid_b64():
 def test_score_happy_path():
     with _make_client() as client:
         resp = client.post("/score", json={
-            "active_concept": CONCEPT, "day_index": 0, "seed": 1,
+            "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
             "submission_b64": _valid_b64(),
         })
         assert resp.status_code == 200
         body = resp.json()
-        assert body["total"] == SETTINGS.prompts.per_day
+        assert body["total"] == SAMPLE_SIZE
+        assert body["sample_size"] == SAMPLE_SIZE
         # Half the canned completions are positive -> hit_rate ~ 0.5.
-        assert body["hit_count"] == SETTINGS.prompts.per_day // 2
+        assert body["hit_count"] == SAMPLE_SIZE // 2
         assert 0.0 <= body["score"] <= 1.0
         assert body["active_concept"] == CONCEPT
         assert body["alpha"] == 8.0
@@ -86,7 +88,7 @@ def test_score_push_scale_override():
         # An explicit push_scale in the request overrides the API default. A small scale makes the
         # push 8.0 bite: efficiency == exp(-8/100) and score == raw_score * efficiency.
         resp = client.post("/score", json={
-            "active_concept": CONCEPT, "day_index": 0, "seed": 1,
+            "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
             "submission_b64": _valid_b64(), "push_scale": 100.0,
         })
         body = resp.json()
@@ -100,7 +102,7 @@ def test_score_push_scale_null_falls_back_to_config_off():
     with _make_client() as client:
         # Explicit null falls back to the per-concept config (off by default), so the reward is identity.
         resp = client.post("/score", json={
-            "active_concept": CONCEPT, "day_index": 0, "seed": 1,
+            "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
             "submission_b64": _valid_b64(), "push_scale": None,
         })
         body = resp.json()
@@ -115,7 +117,7 @@ def test_score_rejects_bad_submission_422():
         meta = {"alpha": "8.0", "layer": "32", "concept": "hedging"}
         blob = build_safetensors({"direction": ("F32", [H], f32_bytes(unit_vector_f32(H)))}, meta)
         resp = client.post("/score", json={
-            "active_concept": CONCEPT, "day_index": 0, "seed": 1,
+            "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
             "submission_b64": base64.b64encode(blob).decode("ascii"),
         })
         assert resp.status_code == 422
@@ -125,7 +127,7 @@ def test_score_rejects_bad_submission_422():
 def test_score_unknown_concept_422():
     with _make_client() as client:
         resp = client.post("/score", json={
-            "active_concept": "not_a_concept", "day_index": 0, "seed": 1,
+            "active_concept": "not_a_concept", "sample_size": SAMPLE_SIZE, "seed": 1,
             "submission_b64": _valid_b64(),
         })
         assert resp.status_code == 422
@@ -148,11 +150,11 @@ def test_score_file_multipart():
     with _make_client() as client:
         resp = client.post(
             "/score-file",
-            data={"active_concept": CONCEPT, "day_index": 0, "seed": 1},
+            data={"active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1},
             files={"submission": ("sub.safetensors", blob, "application/octet-stream")},
         )
         assert resp.status_code == 200
-        assert resp.json()["total"] == SETTINGS.prompts.per_day
+        assert resp.json()["total"] == SAMPLE_SIZE
 
 
 def test_readyz_503_when_not_ready_then_200():

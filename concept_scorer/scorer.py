@@ -111,14 +111,19 @@ def score_submission(
     settings: Settings,
     submission: Submission,
     active_concept: str,
-    day_index: int,
+    sample_size: int,
     seed: int,
     pool: PromptPool,
     return_completions: bool = True,
     push_scale: float | None = None,
 ) -> ScoreResult:
     t0 = time.perf_counter()
-    prompts = pool.sample_day(day_index, seed, settings.prompts.per_day)
+    # CONCEPT_SCORER_MAX_PROMPTS caps the requested sample_size for fast local smoke runs;
+    # unset (the canonical default) it has no effect.
+    effective_size = sample_size
+    if settings.runtime.max_prompts is not None:
+        effective_size = max(1, min(sample_size, settings.runtime.max_prompts))
+    prompts = pool.sample(effective_size, seed)
     t_sample = time.perf_counter()
 
     completions = runtime.generate([p.instruction for p in prompts], submission)
@@ -150,7 +155,7 @@ def score_submission(
             "alpha": submission.alpha,
             "concept": active_concept,
             "layer": submission.layer,
-            "day_index": day_index,
+            "sample_size": len(prompts),
             "seed": seed,
             "detector_version": settings.detectors.get(active_concept),
             "scoring_mode": settings.scoring[active_concept].mode,
