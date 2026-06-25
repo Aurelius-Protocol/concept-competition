@@ -188,7 +188,8 @@ curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' -d '{
 ```json
 {"score":0.328,"hit_count":3,"total":150,"active_concept":"positive_sentiment","sample_size":150,
  "seed":1234,"detector_version":"v3","model_revision":"<sha>","device":"cuda","quantized":true,
- "scoring_mode":"graded","alpha":8000.0,"completions":null,
+ "scoring_mode":"graded","raw_score":0.328,"push":360000.0,"push_scale":null,"efficiency":1.0,
+ "alpha":8000.0,"completions":null,
  "timings_ms":{"sample":2.6,"generate":...,"detect":4.2}}
 ```
 
@@ -207,14 +208,19 @@ concept-scorer score --submission sub.safetensors --concept positive_sentiment -
 
 - **`score`** is the per-concept day-score: `hit_rate` (fraction of completions with intensity ≥
   threshold) or `graded` (mean normalized intensity in `[0,1]`), per `scoring_mode`.
-- **Optional concentration penalty.** When a concept sets `sparsity_lambda > 0` in
-  `config/competition.yaml`, the day-score is multiplied by `clamp(1 - sparsity_lambda·(1 - H), 0, 1)`,
-  where `H` is the direction's Hoyer sparsity (`0` = dense/uniform, `1` = a single active dim) — this
-  rewards concentrated, interpretable directions over diffuse brute-force ones, and keeps the score in
-  `[0,1]`. It is **off by default** (`sparsity_lambda: 0.0`); to enable, raise the value, e.g.
-  `hedging: {mode: graded, threshold: 2.0, saturation: 4.0, sparsity_lambda: 0.5}`. The result's
-  `diagnostics` always reports `sparsity` (H), `raw_score`, and `sparsity_factor`, so you can calibrate
-  `sparsity_lambda` against the real H distribution before turning it on.
+- **Optional minimal-intervention reward.** When a concept sets `push_scale` (a positive number) in
+  `config/competition.yaml`, the day-score is multiplied by `exp(-push / push_scale)`, where
+  `push = |alpha|·sum(|direction|)` is the total absolute steering the submission applies — a gentler
+  push scores higher, and the concept day-score (`0` when nothing on-concept is generated) gates it.
+  This rewards the smallest change that still evokes the concept and starves the high-alpha collapses
+  that produce degenerate keyword spam; `exp(-push/scale)` is in `(0,1]`, so the score stays in `[0,1]`.
+  It is **off by default everywhere** (config `push_scale: null`, and the `/score` request defaults to
+  off). Enable it **per request** by sending a positive `push_scale` in the `/score` body (the
+  validator's knob), or pin a per-concept value in `config/competition.yaml`, e.g.
+  `hedging: {mode: graded, threshold: 2.0, saturation: 4.0, push_scale: 555000.0}`. Precedence:
+  request `push_scale` > per-concept config > off; a recommended starting value is **~555000**
+  (≈ a reference direction's push). The response/`diagnostics` always report `push`, `raw_score`, and
+  `efficiency`, so you can calibrate `push_scale` against the real push distribution before turning it on.
 - An **invalid** submission is a *rejection, not a zero*: HTTP **422** with a typed `error_code`
   (e.g. `not_unit_norm`, `bad_layer`, `concept_mismatch`). The CLI exits non-zero; pass
   `--reject-as-zero` to instead emit `{"score": 0.0, "error_code": ...}`.

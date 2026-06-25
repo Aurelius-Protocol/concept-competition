@@ -60,13 +60,15 @@ detectors:
 # graded (mean normalized intensity, in [0,1]) is a deliberate, config-gated deviation from
 # spec §8 (score = hit_rate). Weight tables are pinned in the detector classes (versioned);
 # calibrate thresholds/saturation against real steered gemma-3-12b completions before launch.
-# sparsity_lambda is the optional concentration-penalty weight (0 = off): the day-score is multiplied
-# by clamp(1 - sparsity_lambda*(1 - Hoyer), 0, 1), where Hoyer in [0,1] measures how concentrated the
-# direction is (0 = dense/uniform, 1 = a single active dim). It rewards sparse, interpretable directions
-# and discourages diffuse brute-force ones. Left off until calibrated against the real Hoyer distribution
-# (see diagnostics.sparsity); raise a concept's value to enable.
+# push_scale is the optional minimal-intervention reward (null = off): the day-score is multiplied by
+# exp(-push/push_scale), where push = |alpha| * sum(|direction|) is the total absolute steering applied.
+# A gentler push scores higher; the concept day-score (0 when nothing on-concept is generated) gates it.
+# This rewards the smallest change that still evokes the concept and starves the high-alpha collapses
+# that produce degenerate keyword spam. Left off until calibrated against the real push distribution
+# (see diagnostics.push). Enable by setting a concept's value here (the pinned "expensive push" scale)
+# or per request via the /score `push_scale` field (request > config > off); recommended start ~555000.
 scoring:
-  birthday_cake:      {mode: hit_rate, threshold: 2.0, saturation: 4.0, sparsity_lambda: 0.0}
-  medical_disclaimer: {mode: hit_rate, threshold: 2.0, saturation: 4.0, sparsity_lambda: 0.0}
-  positive_sentiment: {mode: graded,   threshold: 3.0, saturation: 8.0, sparsity_lambda: 0.0}
-  hedging:            {mode: graded,   threshold: 2.0, saturation: 4.0, sparsity_lambda: 0.0}
+  birthday_cake:      {mode: hit_rate, threshold: 2.0, saturation: 4.0, push_scale: null}
+  medical_disclaimer: {mode: hit_rate, threshold: 2.0, saturation: 4.0, push_scale: null}
+  positive_sentiment: {mode: graded,   threshold: 3.0, saturation: 8.0, push_scale: null}
+  hedging:            {mode: graded,   threshold: 2.0, saturation: 4.0, push_scale: null}

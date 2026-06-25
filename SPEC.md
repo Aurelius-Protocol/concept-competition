@@ -168,12 +168,15 @@ graded:    score = mean_i( clamp(intensity_i / saturation, 0, 1) )          # me
   defaults: birthday-cake and medical-disclaimer use `hit_rate` (presence concepts); positive-sentiment
   and hedging use `graded` (intensity/density concepts). Any concept can be flipped to `hit_rate` with
   a one-line config change.
-- **Optional concentration penalty (config-gated, off by default).** With `sparsity_lambda > 0` for a
-  concept, the day-score is scaled by `clamp(1 - sparsity_lambda·(1 - H), 0, 1)`, where
-  `H = (√d − ‖direction‖₁/‖direction‖₂) / (√d − 1)` is the direction's Hoyer sparsity in `[0, 1]`
-  (`0` = dense/uniform, `1` = a single active dim). This rewards concentrated, interpretable directions
-  and discourages diffuse brute-forcing of the detector. `sparsity_lambda = 0` (the default) is the
-  identity, and the factor keeps the day-score in `[0, 1]`.
+- **Optional minimal-intervention reward (off by default).** With a positive `push_scale`, the
+  day-score is scaled by `exp(-push / push_scale)`, where `push = |alpha|·‖direction‖₁` is the total
+  absolute steering applied. A gentler push scores higher, and the concept day-score (`0` when nothing
+  on-concept is generated) gates it, so the reward goes to the smallest change that still evokes the
+  concept — starving the high-alpha collapses that produce degenerate keyword spam. It is off on every
+  path by default; enable it per request via the `/score` `push_scale` field or pin a per-concept value
+  in config (precedence: request > config > off). `push_scale` unset (the default) is the identity, and
+  `exp(-push/scale)` in `(0, 1]` keeps the day-score in `[0, 1]`. Recommended starting value ~555000
+  (≈ a reference direction's push); calibrate against the real push distribution.
 
 **`alpha`** is the scalar steering strength: at evaluation the validator adds `alpha × direction` to
 the layer-32 residual stream. With `direction` unit-normalized, `alpha` is the sole control of how

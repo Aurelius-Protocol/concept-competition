@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import math
 
+import pytest
 from fastapi.testclient import TestClient
 
 from concept_scorer.api.app import AppState, create_app
@@ -70,12 +72,64 @@ def test_score_happy_path():
         assert body["detector_version"] == "v3"
         assert body["scoring_mode"] == "graded"  # positive_sentiment defaults to graded
         assert all("score" in c for c in body["completions"])
-        # Concentration-penalty diagnostics reach the wire. The test vector is 1-hot (H == 1), and
-        # the shipped config leaves the penalty off (sparsity_lambda == 0), so score == raw_score.
-        assert body["sparsity"] == 1.0
-        assert body["sparsity_lambda"] == 0.0
-        assert body["sparsity_factor"] == 1.0
+        # Minimal-intervention diagnostics reach the wire. The test vector is 1-hot (sum|x| == 1) at
+        # alpha 8.0, so push == 8.0 is reported even though the reward is OFF by default (the request
+        # omits push_scale and the per-concept config is null) -> efficiency == 1, score == raw_score.
+        assert body["push"] == 8.0
+        assert body["push_scale"] is None
+        assert body["efficiency"] == 1.0
         assert body["raw_score"] == body["score"]
+
+
+def test_score_push_scale_enables_via_api():
+    with _make_client() as client:
+        # The reward is off by default; passing a positive push_scale in the request enables it. A
+        # small scale makes push 8.0 bite: efficiency == exp(-8/100) and score == raw_score * efficiency.
+        resp = client.post("/score", json={
+            "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
+            "submission_b64": _valid_b64(), "push_scale": 100.0,
+        })
+        body = resp.json()
+        assert body["push_scale"] == 100.0
+        eff = math.exp(-8.0 / 100.0)
+        assert body["efficiency"] == pytest.approx(eff)
+        assert body["score"] == pytest.approx(body["raw_score"] * eff)
+
+
+def test_score_push_scale_null_falls_back_to_config_off():
+    with _make_client() as client:
+        # Explicit null falls back to the per-concept config (off by default), so the reward is identity.
+        resp = client.post("/score", json={
+            "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
+            "submission_b64": _valid_b64(), "push_scale": None,
+        })
+        body = resp.json()
+        assert body["push_scale"] is None
+        assert body["efficiency"] == 1.0
+        assert body["raw_score"] == body["score"]
+
+
+def test_score_rejects_nonpositive_push_scale():
+    with _make_client() as client:
+        # push_scale must be > 0 when provided (mirrors the config invariant); 0 or negative -> 422
+        # on both the JSON and the multipart endpoints.
+        blob = build_safetensors(
+            {"direction": ("F32", [H], f32_bytes(unit_vector_f32(H)))},
+            {"alpha": "8.0", "layer": "32", "concept": CONCEPT},
+        )
+        for bad in (0, -5.0):
+            json_resp = client.post("/score", json={
+                "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
+                "submission_b64": _valid_b64(), "push_scale": bad,
+            })
+            assert json_resp.status_code == 422
+            file_resp = client.post(
+                "/score-file",
+                data={"active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
+                      "push_scale": bad},
+                files={"submission": ("sub.safetensors", blob, "application/octet-stream")},
+            )
+            assert file_resp.status_code == 422
 
 
 def test_score_rejects_bad_submission_422():

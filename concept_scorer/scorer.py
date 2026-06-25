@@ -51,39 +51,30 @@ def _aggregate(results, mode: str, saturation: float) -> float:
     return acc / len(results)
 
 
-def hoyer_sparsity(direction) -> float:
-    """Hoyer sparsity of a vector in [0,1]: 0 = uniform/dense, 1 = a single active dim.
+def push_magnitude(direction, alpha: float) -> float:
+    """Total absolute steering applied: ``|alpha| * sum(|x|)`` over the direction.
 
-    ``H = (sqrt(d) - L1/L2) / (sqrt(d) - 1)``. The submission direction is unit-norm (L2 ~ 1,
-    enforced at load), but we divide by the measured L2 so the value is exact regardless of the
-    norm tolerance. One pure-Python pass over the stdlib float array (mirrors the norm loop in
+    The submission direction is unit-L2 by construction, so its raw values are tiny; the actual
+    intervention added to the residual stream is ``alpha * direction``. Summing the absolute injected
+    values measures how much total push the submission spends — the lever behind the degenerate
+    high-alpha collapses. One pure-Python pass over the stdlib float array (mirrors the norm loop in
     ``submission.load_submission``) — no torch, so it runs on the no-GPU path too.
     """
-    d = len(direction)
-    if d <= 1:
-        return 1.0
-    l1 = 0.0
-    l2sq = 0.0
+    s = 0.0
     for v in direction:
-        l1 += abs(v)
-        l2sq += v * v
-    l2 = math.sqrt(l2sq)
-    if l2 == 0.0:
-        return 0.0
-    root_d = math.sqrt(d)
-    return min(1.0, max(0.0, (root_d - l1 / l2) / (root_d - 1.0)))
+        s += abs(v)
+    return abs(alpha) * s
 
 
-def _penalty_factor(h: float, lam: float) -> float:
-    """Concentration multiplier in [0,1]: clamp(1 - lam*(1 - H), 0, 1). lam <= 0 disables it."""
-    if lam <= 0.0:
+def efficiency_factor(push: float, scale: float | None) -> float:
+    """Gentleness multiplier in (0,1]: ``exp(-push/scale)``. A smaller push scores closer to 1.
+
+    ``scale`` (a per-concept config knob) sets what counts as an expensive push. ``None`` or a
+    non-positive value disables the reward (returns 1.0), leaving the day-score unchanged.
+    """
+    if scale is None or scale <= 0.0:
         return 1.0
-    return min(1.0, max(0.0, 1.0 - lam * (1.0 - h)))
-
-
-def sparsity_factor(direction, lam: float) -> float:
-    """Penalty multiplier for a direction: 1.0 when off, lower for diffuse (dense) directions."""
-    return _penalty_factor(hoyer_sparsity(direction), lam)
+    return math.exp(-push / scale)
 
 
 def score_completions(
@@ -124,6 +115,7 @@ def score_submission(
     seed: int,
     pool: PromptPool,
     return_completions: bool = True,
+    push_scale: float | None = None,
 ) -> ScoreResult:
     t0 = time.perf_counter()
     # CONCEPT_SCORER_MAX_PROMPTS caps the requested sample_size for fast local smoke runs;
@@ -142,14 +134,17 @@ def score_submission(
     )
     t_detect = time.perf_counter()
 
-    # Per-submission concentration penalty: scale the day-score by a factor in [0,1] derived from the
-    # direction's Hoyer sparsity. sparsity_lambda == 0 (default) leaves the score unchanged. Computed
-    # even when off so diagnostics.sparsity can be used to calibrate lambda. Keeps the score in [0,1].
+    # Per-submission minimal-intervention reward: scale the day-score by exp(-push/push_scale), where
+    # push = |alpha| * sum(|direction|) is the total absolute steering applied. A gentler push scores
+    # higher; the concept day-score (0 when nothing on-concept is generated) gates it. The caller may
+    # pass an explicit push_scale (the API does); when None we fall back to the per-concept config value
+    # (null/off by default). push is computed even when off so diagnostics can calibrate push_scale.
+    # exp(-push/scale) is in (0,1] and raw_score in [0,1], so the product stays in [0,1].
     raw_score = score
-    sparsity = hoyer_sparsity(submission.direction)
-    sparsity_lambda = settings.scoring[active_concept].sparsity_lambda
-    factor = _penalty_factor(sparsity, sparsity_lambda)
-    score = raw_score * factor
+    push = push_magnitude(submission.direction, submission.alpha)
+    scale = push_scale if push_scale is not None else settings.scoring[active_concept].push_scale
+    efficiency = efficiency_factor(push, scale)
+    score = raw_score * efficiency
 
     return ScoreResult(
         score=score,
@@ -165,9 +160,9 @@ def score_submission(
             "detector_version": settings.detectors.get(active_concept),
             "scoring_mode": settings.scoring[active_concept].mode,
             "raw_score": raw_score,
-            "sparsity": sparsity,
-            "sparsity_factor": factor,
-            "sparsity_lambda": sparsity_lambda,
+            "push": push,
+            "push_scale": scale,
+            "efficiency": efficiency,
             "model_revision": getattr(runtime, "model_revision", settings.model.revision),
             "device": getattr(runtime, "device", None),
             "quantized": getattr(runtime, "quantized", None),
