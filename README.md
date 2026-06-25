@@ -207,6 +207,14 @@ concept-scorer score --submission sub.safetensors --concept positive_sentiment -
 
 - **`score`** is the per-concept day-score: `hit_rate` (fraction of completions with intensity ≥
   threshold) or `graded` (mean normalized intensity in `[0,1]`), per `scoring_mode`.
+- **Optional concentration penalty.** When a concept sets `sparsity_lambda > 0` in
+  `config/competition.yaml`, the day-score is multiplied by `clamp(1 - sparsity_lambda·(1 - H), 0, 1)`,
+  where `H` is the direction's Hoyer sparsity (`0` = dense/uniform, `1` = a single active dim) — this
+  rewards concentrated, interpretable directions over diffuse brute-force ones, and keeps the score in
+  `[0,1]`. It is **off by default** (`sparsity_lambda: 0.0`); to enable, raise the value, e.g.
+  `hedging: {mode: graded, threshold: 2.0, saturation: 4.0, sparsity_lambda: 0.5}`. The result's
+  `diagnostics` always reports `sparsity` (H), `raw_score`, and `sparsity_factor`, so you can calibrate
+  `sparsity_lambda` against the real H distribution before turning it on.
 - An **invalid** submission is a *rejection, not a zero*: HTTP **422** with a typed `error_code`
   (e.g. `not_unit_norm`, `bad_layer`, `concept_mismatch`). The CLI exits non-zero; pass
   `--reject-as-zero` to instead emit `{"score": 0.0, "error_code": ...}`.

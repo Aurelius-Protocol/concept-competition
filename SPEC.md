@@ -168,6 +168,12 @@ graded:    score = mean_i( clamp(intensity_i / saturation, 0, 1) )          # me
   defaults: birthday-cake and medical-disclaimer use `hit_rate` (presence concepts); positive-sentiment
   and hedging use `graded` (intensity/density concepts). Any concept can be flipped to `hit_rate` with
   a one-line config change.
+- **Optional concentration penalty (config-gated, off by default).** With `sparsity_lambda > 0` for a
+  concept, the day-score is scaled by `clamp(1 - sparsity_lambda·(1 - H), 0, 1)`, where
+  `H = (√d − ‖direction‖₁/‖direction‖₂) / (√d − 1)` is the direction's Hoyer sparsity in `[0, 1]`
+  (`0` = dense/uniform, `1` = a single active dim). This rewards concentrated, interpretable directions
+  and discourages diffuse brute-forcing of the detector. `sparsity_lambda = 0` (the default) is the
+  identity, and the factor keeps the day-score in `[0, 1]`.
 
 **`alpha`** is the scalar steering strength: at evaluation the validator adds `alpha × direction` to
 the layer-32 residual stream. With `direction` unit-normalized, `alpha` is the sole control of how
