@@ -40,6 +40,14 @@ class ScoreResponse(BaseModel):
     quantized: bool | None = None
     # Which aggregation produced `score` for this concept: "hit_rate" or "graded".
     scoring_mode: str | None = None
+    # Concentration penalty audit trail: `score == raw_score * sparsity_factor`, where
+    # sparsity_factor = clamp(1 - sparsity_lambda*(1 - sparsity), 0, 1) and `sparsity` is the
+    # direction's Hoyer sparsity in [0,1]. With sparsity_lambda=0 (default) the penalty is off and
+    # raw_score == score. `sparsity` is reported even when off, for calibrating sparsity_lambda.
+    raw_score: float | None = None
+    sparsity: float | None = None
+    sparsity_factor: float | None = None
+    sparsity_lambda: float | None = None
     alpha: float
     completions: list[CompletionRecordModel] | None = None
     timings_ms: dict[str, float] = Field(default_factory=dict)

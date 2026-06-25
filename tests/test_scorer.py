@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import array
+import math
 from dataclasses import replace
 
 from concept_scorer.config import ScoringCfg, load_settings
 from concept_scorer.prompts import PromptItem
-from concept_scorer.scorer import score_completions
+from concept_scorer.scorer import hoyer_sparsity, score_completions, sparsity_factor
 
 SETTINGS = load_settings()
 
@@ -50,3 +52,36 @@ def test_modes_diverge_on_same_completions():
     hr = score_completions(comps, _prompts(8), "positive_sentiment", _with_mode("hit_rate"))[0]
     gr = score_completions(comps, _prompts(8), "positive_sentiment", _with_mode("graded"))[0]
     assert hr != gr  # 0.5 vs 0.1875
+
+
+def _vec(vals: list[float]) -> array.array:
+    return array.array("f", vals)
+
+
+def test_hoyer_sparsity_one_hot_is_one():
+    # A 1-hot unit vector is maximally concentrated -> H == 1.
+    assert hoyer_sparsity(_vec([1.0, 0.0, 0.0, 0.0])) == 1.0
+
+
+def test_hoyer_sparsity_uniform_is_zero():
+    # A uniform unit vector (each 1/sqrt(d)) is maximally diffuse -> H == 0.
+    v = 1.0 / math.sqrt(4)
+    assert hoyer_sparsity(_vec([v, v, v, v])) < 1e-6
+
+
+def test_sparsity_factor_off_is_identity():
+    # lambda == 0 disables the penalty: factor is 1.0 regardless of density.
+    assert sparsity_factor(_vec([0.5, 0.5, 0.5, 0.5]), 0.0) == 1.0
+    assert sparsity_factor(_vec([1.0, 0.0, 0.0, 0.0]), 0.0) == 1.0
+
+
+def test_sparsity_factor_penalizes_diffuse_directions():
+    # Uniform direction has H == 0, so factor == 1 - lambda.
+    uniform = _vec([0.5, 0.5, 0.5, 0.5])
+    assert abs(sparsity_factor(uniform, 1.0) - 0.0) < 1e-6
+    assert abs(sparsity_factor(uniform, 0.5) - 0.5) < 1e-6
+
+
+def test_sparsity_factor_spares_concentrated_directions():
+    # Concentrated (1-hot) direction has H == 1, so factor == 1 even at full lambda.
+    assert abs(sparsity_factor(_vec([1.0, 0.0, 0.0, 0.0]), 1.0) - 1.0) < 1e-6

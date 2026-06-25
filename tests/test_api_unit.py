@@ -68,6 +68,12 @@ def test_score_happy_path():
         assert body["detector_version"] == "v3"
         assert body["scoring_mode"] == "graded"  # positive_sentiment defaults to graded
         assert all("score" in c for c in body["completions"])
+        # Concentration-penalty diagnostics reach the wire. The test vector is 1-hot (H == 1), and
+        # the shipped config leaves the penalty off (sparsity_lambda == 0), so score == raw_score.
+        assert body["sparsity"] == 1.0
+        assert body["sparsity_lambda"] == 0.0
+        assert body["sparsity_factor"] == 1.0
+        assert body["raw_score"] == body["score"]
 
 
 def test_score_rejects_bad_submission_422():

@@ -7,6 +7,7 @@ per-completion intensity, in [0,1]). ``graded`` is a deliberate, config-gated de
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 
@@ -48,6 +49,41 @@ def _aggregate(results, mode: str, saturation: float) -> float:
     else:
         acc = sum(1.0 for r in results if r.hit)
     return acc / len(results)
+
+
+def hoyer_sparsity(direction) -> float:
+    """Hoyer sparsity of a vector in [0,1]: 0 = uniform/dense, 1 = a single active dim.
+
+    ``H = (sqrt(d) - L1/L2) / (sqrt(d) - 1)``. The submission direction is unit-norm (L2 ~ 1,
+    enforced at load), but we divide by the measured L2 so the value is exact regardless of the
+    norm tolerance. One pure-Python pass over the stdlib float array (mirrors the norm loop in
+    ``submission.load_submission``) — no torch, so it runs on the no-GPU path too.
+    """
+    d = len(direction)
+    if d <= 1:
+        return 1.0
+    l1 = 0.0
+    l2sq = 0.0
+    for v in direction:
+        l1 += abs(v)
+        l2sq += v * v
+    l2 = math.sqrt(l2sq)
+    if l2 == 0.0:
+        return 0.0
+    root_d = math.sqrt(d)
+    return min(1.0, max(0.0, (root_d - l1 / l2) / (root_d - 1.0)))
+
+
+def _penalty_factor(h: float, lam: float) -> float:
+    """Concentration multiplier in [0,1]: clamp(1 - lam*(1 - H), 0, 1). lam <= 0 disables it."""
+    if lam <= 0.0:
+        return 1.0
+    return min(1.0, max(0.0, 1.0 - lam * (1.0 - h)))
+
+
+def sparsity_factor(direction, lam: float) -> float:
+    """Penalty multiplier for a direction: 1.0 when off, lower for diffuse (dense) directions."""
+    return _penalty_factor(hoyer_sparsity(direction), lam)
 
 
 def score_completions(
@@ -101,6 +137,15 @@ def score_submission(
     )
     t_detect = time.perf_counter()
 
+    # Per-submission concentration penalty: scale the day-score by a factor in [0,1] derived from the
+    # direction's Hoyer sparsity. sparsity_lambda == 0 (default) leaves the score unchanged. Computed
+    # even when off so diagnostics.sparsity can be used to calibrate lambda. Keeps the score in [0,1].
+    raw_score = score
+    sparsity = hoyer_sparsity(submission.direction)
+    sparsity_lambda = settings.scoring[active_concept].sparsity_lambda
+    factor = _penalty_factor(sparsity, sparsity_lambda)
+    score = raw_score * factor
+
     return ScoreResult(
         score=score,
         hit_count=hit_count,
@@ -114,6 +159,10 @@ def score_submission(
             "seed": seed,
             "detector_version": settings.detectors.get(active_concept),
             "scoring_mode": settings.scoring[active_concept].mode,
+            "raw_score": raw_score,
+            "sparsity": sparsity,
+            "sparsity_factor": factor,
+            "sparsity_lambda": sparsity_lambda,
             "model_revision": getattr(runtime, "model_revision", settings.model.revision),
             "device": getattr(runtime, "device", None),
             "quantized": getattr(runtime, "quantized", None),
