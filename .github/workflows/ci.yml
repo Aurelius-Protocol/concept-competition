@@ -17,7 +17,9 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Match the Docker build and pyproject's `requires-python = ">=3.11,<3.12"`; on 3.12 the
+          # `pip install -e .` step aborts with "requires a different Python", failing every run.
+          python-version: "3.11"
           cache: pip
 
       - name: Install dependencies (CPU-only)
