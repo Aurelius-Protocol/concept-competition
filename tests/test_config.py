@@ -75,19 +75,19 @@ def test_scoring_block_roundtrips(tmp_path):
     s = load_settings(_write_cfg(tmp_path, "{birthday_cake: {mode: graded, threshold: 2.0, saturation: 4.0}}"))
     sc = s.scoring["birthday_cake"]
     assert sc.mode == "graded" and sc.threshold == 2.0 and sc.saturation == 4.0
-    assert sc.sparsity_lambda == 0.0  # defaults to off when the key is omitted
+    assert sc.push_scale is None  # defaults to off when the key is omitted
 
 
-def test_sparsity_lambda_roundtrips(tmp_path):
-    s = load_settings(_write_cfg(tmp_path, "{birthday_cake: {threshold: 2.0, sparsity_lambda: 0.5}}"))
-    assert s.scoring["birthday_cake"].sparsity_lambda == 0.5
+def test_push_scale_roundtrips(tmp_path):
+    s = load_settings(_write_cfg(tmp_path, "{birthday_cake: {threshold: 2.0, push_scale: 500000.0}}"))
+    assert s.scoring["birthday_cake"].push_scale == 500000.0
 
 
 @pytest.mark.parametrize("scoring_yaml", [
     "{hedging: {threshold: 1.0}}",                                       # keys != active_allowed
     "{birthday_cake: {threshold: 1.0, mode: nonsense}}",                 # bad mode
     "{birthday_cake: {threshold: 1.0, mode: graded, saturation: 0}}",    # graded saturation <= 0
-    "{birthday_cake: {threshold: 1.0, sparsity_lambda: -0.1}}",          # negative sparsity_lambda
+    "{birthday_cake: {threshold: 1.0, push_scale: 0}}",                  # non-positive push_scale
 ])
 def test_scoring_invariants_rejected(tmp_path, scoring_yaml):
     with pytest.raises(ValueError):

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import base64
+import math
 
+import pytest
 from fastapi.testclient import TestClient
 
 from concept_scorer.api.app import AppState, create_app
 from concept_scorer.config import load_settings
+from concept_scorer.schemas import DEFAULT_PUSH_SCALE
 from concept_scorer.prompts import PromptItem, PromptPool
 from concept_scorer.submission import load_submission
 from tests.safetensors_util import build_safetensors, f32_bytes, unit_vector_f32
@@ -68,11 +71,41 @@ def test_score_happy_path():
         assert body["detector_version"] == "v3"
         assert body["scoring_mode"] == "graded"  # positive_sentiment defaults to graded
         assert all("score" in c for c in body["completions"])
-        # Concentration-penalty diagnostics reach the wire. The test vector is 1-hot (H == 1), and
-        # the shipped config leaves the penalty off (sparsity_lambda == 0), so score == raw_score.
-        assert body["sparsity"] == 1.0
-        assert body["sparsity_lambda"] == 0.0
-        assert body["sparsity_factor"] == 1.0
+        # Minimal-intervention diagnostics reach the wire. The test vector is 1-hot (sum|x| == 1) at
+        # alpha 8.0, so push == 8.0. The request omits push_scale, so the API applies its default and
+        # the reward is on: score == raw_score * exp(-push/DEFAULT_PUSH_SCALE).
+        assert body["push"] == 8.0
+        assert body["push_scale"] == DEFAULT_PUSH_SCALE
+        expected_eff = math.exp(-8.0 / DEFAULT_PUSH_SCALE)
+        assert body["efficiency"] == pytest.approx(expected_eff)
+        assert body["score"] == pytest.approx(body["raw_score"] * expected_eff)
+
+
+def test_score_push_scale_override():
+    with _make_client() as client:
+        # An explicit push_scale in the request overrides the API default. A small scale makes the
+        # push 8.0 bite: efficiency == exp(-8/100) and score == raw_score * efficiency.
+        resp = client.post("/score", json={
+            "active_concept": CONCEPT, "day_index": 0, "seed": 1,
+            "submission_b64": _valid_b64(), "push_scale": 100.0,
+        })
+        body = resp.json()
+        assert body["push_scale"] == 100.0
+        eff = math.exp(-8.0 / 100.0)
+        assert body["efficiency"] == pytest.approx(eff)
+        assert body["score"] == pytest.approx(body["raw_score"] * eff)
+
+
+def test_score_push_scale_null_falls_back_to_config_off():
+    with _make_client() as client:
+        # Explicit null falls back to the per-concept config (off by default), so the reward is identity.
+        resp = client.post("/score", json={
+            "active_concept": CONCEPT, "day_index": 0, "seed": 1,
+            "submission_b64": _valid_b64(), "push_scale": None,
+        })
+        body = resp.json()
+        assert body["push_scale"] is None
+        assert body["efficiency"] == 1.0
         assert body["raw_score"] == body["score"]
 
 

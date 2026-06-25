@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+# Minimal-intervention scale the API applies to exp(-push/push_scale) when a request omits push_scale.
+# Chosen from the observed push distribution (≈ a reference direction's push). A request may override it
+# with any positive number, or pass null to fall back to the per-concept config value (off unless set).
+DEFAULT_PUSH_SCALE = 555_000.0
+
 
 class ScoreRequest(BaseModel):
     active_concept: str
@@ -13,6 +18,9 @@ class ScoreRequest(BaseModel):
     submission_b64: str | None = None
     submission_path: str | None = None
     return_completions: bool = True
+    # Minimal-intervention scale for exp(-push/push_scale). Omitted -> DEFAULT_PUSH_SCALE; null -> use
+    # the per-concept config value (off unless set); a positive number overrides both.
+    push_scale: float | None = DEFAULT_PUSH_SCALE
 
 
 class CompletionRecordModel(BaseModel):
@@ -40,14 +48,14 @@ class ScoreResponse(BaseModel):
     quantized: bool | None = None
     # Which aggregation produced `score` for this concept: "hit_rate" or "graded".
     scoring_mode: str | None = None
-    # Concentration penalty audit trail: `score == raw_score * sparsity_factor`, where
-    # sparsity_factor = clamp(1 - sparsity_lambda*(1 - sparsity), 0, 1) and `sparsity` is the
-    # direction's Hoyer sparsity in [0,1]. With sparsity_lambda=0 (default) the penalty is off and
-    # raw_score == score. `sparsity` is reported even when off, for calibrating sparsity_lambda.
+    # Minimal-intervention reward audit trail: `score == raw_score * efficiency`, where
+    # efficiency = exp(-push/push_scale) and push = |alpha| * sum(|direction|) is the total absolute
+    # steering applied. With push_scale=null (default) the reward is off and raw_score == score.
+    # `push` is reported even when off, for calibrating push_scale.
     raw_score: float | None = None
-    sparsity: float | None = None
-    sparsity_factor: float | None = None
-    sparsity_lambda: float | None = None
+    push: float | None = None
+    push_scale: float | None = None
+    efficiency: float | None = None
     alpha: float
     completions: list[CompletionRecordModel] | None = None
     timings_ms: dict[str, float] = Field(default_factory=dict)

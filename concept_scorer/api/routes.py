@@ -12,6 +12,7 @@ from ..backends import SteeringUnsupported
 from ..errors import ErrorCode, SubmissionError
 from ..scorer import score_submission
 from ..schemas import (
+    DEFAULT_PUSH_SCALE,
     CompletionRecordModel,
     HealthResponse,
     InfoResponse,
@@ -51,16 +52,16 @@ def _build_response(result, submission, active_concept, day_index, seed) -> Scor
         quantized=result.diagnostics.get("quantized"),
         scoring_mode=result.diagnostics.get("scoring_mode"),
         raw_score=result.diagnostics.get("raw_score"),
-        sparsity=result.diagnostics.get("sparsity"),
-        sparsity_factor=result.diagnostics.get("sparsity_factor"),
-        sparsity_lambda=result.diagnostics.get("sparsity_lambda"),
+        push=result.diagnostics.get("push"),
+        push_scale=result.diagnostics.get("push_scale"),
+        efficiency=result.diagnostics.get("efficiency"),
         alpha=submission.alpha,
         completions=completions,
         timings_ms=result.diagnostics.get("timings_ms", {}),
     )
 
 
-async def _score(state, raw: bytes, active_concept, day_index, seed, return_completions):
+async def _score(state, raw: bytes, active_concept, day_index, seed, return_completions, push_scale):
     settings = state.settings
     try:
         # The API is the untrusted entry point for `active_concept`; reject anything outside the
@@ -83,12 +84,12 @@ async def _score(state, raw: bytes, active_concept, day_index, seed, return_comp
             async with state.lock:
                 result = score_submission(
                     state.runtime, settings, submission, active_concept,
-                    day_index, seed, state.pool, return_completions,
+                    day_index, seed, state.pool, return_completions, push_scale,
                 )
         else:
             result = score_submission(
                 state.runtime, settings, submission, active_concept,
-                day_index, seed, state.pool, return_completions,
+                day_index, seed, state.pool, return_completions, push_scale,
             )
     except SteeringUnsupported as e:
         return JSONResponse(
@@ -113,7 +114,8 @@ async def score_json(request: Request, body: ScoreRequest):
                      "message": "provide submission_b64 or submission_path", "detail": None},
         )
     return await _score(
-        state, raw, body.active_concept, body.day_index, body.seed, body.return_completions
+        state, raw, body.active_concept, body.day_index, body.seed, body.return_completions,
+        body.push_scale,
     )
 
 
@@ -124,11 +126,14 @@ async def score_file(
     day_index: int = Form(...),
     seed: int = Form(...),
     return_completions: bool = Form(True),
+    push_scale: float | None = Form(DEFAULT_PUSH_SCALE),
     submission: UploadFile = File(...),
 ):
     state = _state(request)
     raw = await submission.read()
-    return await _score(state, raw, active_concept, day_index, seed, return_completions)
+    return await _score(
+        state, raw, active_concept, day_index, seed, return_completions, push_scale
+    )
 
 
 @router.get("/healthz", response_model=HealthResponse)

@@ -8,7 +8,7 @@ from dataclasses import replace
 
 from concept_scorer.config import ScoringCfg, load_settings
 from concept_scorer.prompts import PromptItem
-from concept_scorer.scorer import hoyer_sparsity, score_completions, sparsity_factor
+from concept_scorer.scorer import efficiency_factor, push_magnitude, score_completions
 
 SETTINGS = load_settings()
 
@@ -58,30 +58,30 @@ def _vec(vals: list[float]) -> array.array:
     return array.array("f", vals)
 
 
-def test_hoyer_sparsity_one_hot_is_one():
-    # A 1-hot unit vector is maximally concentrated -> H == 1.
-    assert hoyer_sparsity(_vec([1.0, 0.0, 0.0, 0.0])) == 1.0
+def test_push_magnitude_is_alpha_times_l1():
+    # push = |alpha| * sum(|x|). Here sum(|x|) = 1.4, alpha = 10 -> 14.0; sign of alpha is ignored.
+    assert abs(push_magnitude(_vec([0.6, -0.8]), 10.0) - 14.0) < 1e-6
+    assert abs(push_magnitude(_vec([0.6, -0.8]), -10.0) - 14.0) < 1e-6
 
 
-def test_hoyer_sparsity_uniform_is_zero():
-    # A uniform unit vector (each 1/sqrt(d)) is maximally diffuse -> H == 0.
-    v = 1.0 / math.sqrt(4)
-    assert hoyer_sparsity(_vec([v, v, v, v])) < 1e-6
+def test_efficiency_off_is_identity():
+    # push_scale None or <= 0 disables the reward: factor is 1.0 regardless of push.
+    assert efficiency_factor(788513.0, None) == 1.0
+    assert efficiency_factor(788513.0, 0.0) == 1.0
 
 
-def test_sparsity_factor_off_is_identity():
-    # lambda == 0 disables the penalty: factor is 1.0 regardless of density.
-    assert sparsity_factor(_vec([0.5, 0.5, 0.5, 0.5]), 0.0) == 1.0
-    assert sparsity_factor(_vec([1.0, 0.0, 0.0, 0.0]), 0.0) == 1.0
+def test_efficiency_rewards_gentler_push():
+    # exp(-push/scale): a smaller push scores strictly higher, and push == scale gives exp(-1).
+    gentle = efficiency_factor(100.0, 1000.0)
+    hard = efficiency_factor(900.0, 1000.0)
+    assert gentle > hard
+    assert abs(efficiency_factor(1000.0, 1000.0) - math.exp(-1.0)) < 1e-9
 
 
-def test_sparsity_factor_penalizes_diffuse_directions():
-    # Uniform direction has H == 0, so factor == 1 - lambda.
-    uniform = _vec([0.5, 0.5, 0.5, 0.5])
-    assert abs(sparsity_factor(uniform, 1.0) - 0.0) < 1e-6
-    assert abs(sparsity_factor(uniform, 0.5) - 0.5) < 1e-6
-
-
-def test_sparsity_factor_spares_concentrated_directions():
-    # Concentrated (1-hot) direction has H == 1, so factor == 1 even at full lambda.
-    assert abs(sparsity_factor(_vec([1.0, 0.0, 0.0, 0.0]), 1.0) - 1.0) < 1e-6
+def test_efficiency_stays_in_unit_interval():
+    # exp(-push/scale) in (0,1] for push >= 0; multiplied into a day-score in [0,1] it stays bounded.
+    for push in (0.0, 1.0, 1e3, 1e6):
+        f = efficiency_factor(push, 5e5)
+        assert 0.0 < f <= 1.0
+        assert 0.0 <= 1.0 * f <= 1.0  # raw_score (max 1.0) * efficiency stays in [0,1]
+    assert efficiency_factor(0.0, 5e5) == 1.0  # zero push -> no penalty

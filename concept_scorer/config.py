@@ -91,9 +91,10 @@ class ScoringCfg:
     threshold: float
     mode: str = "hit_rate"          # "hit_rate" | "graded"
     saturation: float = 1.0         # graded: per-completion clamp(score / saturation, 0, 1)
-    # Concentration penalty weight (off by default). day-score *= clamp(1 - lambda*(1 - Hoyer), 0, 1),
-    # where Hoyer in [0,1] is the direction's sparsity (0 = dense/uniform, 1 = one active dim).
-    sparsity_lambda: float = 0.0
+    # Minimal-intervention reward (off by default). day-score *= exp(-push/push_scale), where
+    # push = |alpha| * sum(|direction|) is the total absolute steering applied. Smaller push -> higher
+    # score. push_scale sets the "expensive push" scale; None/omitted disables it (factor 1.0).
+    push_scale: float | None = None
 
 
 @dataclass(frozen=True)
@@ -186,8 +187,8 @@ class Settings:
                 )
             if sc.saturation <= 0:
                 raise ValueError(f"scoring[{concept!r}].saturation must be > 0")
-            if sc.sparsity_lambda < 0:
-                raise ValueError(f"scoring[{concept!r}].sparsity_lambda must be >= 0")
+            if sc.push_scale is not None and sc.push_scale <= 0:
+                raise ValueError(f"scoring[{concept!r}].push_scale must be > 0 when set")
 
 
 def _parse(raw: dict[str, Any]) -> Settings:
