@@ -213,10 +213,13 @@ concept-scorer score --submission sub.safetensors --concept positive_sentiment -
   push scores higher, and the concept day-score (`0` when nothing on-concept is generated) gates it.
   This rewards the smallest change that still evokes the concept and starves the high-alpha collapses
   that produce degenerate keyword spam; `exp(-push/scale)` is in `(0,1]`, so the score stays in `[0,1]`.
-  It is **off by default** (`push_scale: null`); to enable, set the scale, e.g.
-  `hedging: {mode: graded, threshold: 2.0, saturation: 4.0, push_scale: 500000.0}`. The result's
-  `diagnostics` always reports `push`, `raw_score`, and `efficiency`, so you can calibrate `push_scale`
-  against the real push distribution before turning it on.
+  It is **off by default everywhere** (config `push_scale: null`, and the `/score` request defaults to
+  off). Enable it **per request** by sending a positive `push_scale` in the `/score` body (the
+  validator's knob), or pin a per-concept value in `config/competition.yaml`, e.g.
+  `hedging: {mode: graded, threshold: 2.0, saturation: 4.0, push_scale: 555000.0}`. Precedence:
+  request `push_scale` > per-concept config > off; a recommended starting value is **~555000**
+  (≈ a reference direction's push). The response/`diagnostics` always report `push`, `raw_score`, and
+  `efficiency`, so you can calibrate `push_scale` against the real push distribution before turning it on.
 - An **invalid** submission is a *rejection, not a zero*: HTTP **422** with a typed `error_code`
   (e.g. `not_unit_norm`, `bad_layer`, `concept_mismatch`). The CLI exits non-zero; pass
   `--reject-as-zero` to instead emit `{"score": 0.0, "error_code": ...}`.

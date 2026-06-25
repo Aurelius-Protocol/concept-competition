@@ -12,7 +12,6 @@ from ..backends import SteeringUnsupported
 from ..errors import ErrorCode, SubmissionError
 from ..scorer import score_submission
 from ..schemas import (
-    DEFAULT_PUSH_SCALE,
     CompletionRecordModel,
     HealthResponse,
     InfoResponse,
@@ -126,7 +125,7 @@ async def score_file(
     sample_size: int = Form(...),
     seed: int = Form(...),
     return_completions: bool = Form(True),
-    push_scale: float | None = Form(DEFAULT_PUSH_SCALE),
+    push_scale: float | None = Form(None),
     submission: UploadFile = File(...),
 ):
     state = _state(request)

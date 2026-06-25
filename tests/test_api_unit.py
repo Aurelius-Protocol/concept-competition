@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 
 from concept_scorer.api.app import AppState, create_app
 from concept_scorer.config import load_settings
-from concept_scorer.schemas import DEFAULT_PUSH_SCALE
 from concept_scorer.prompts import PromptItem, PromptPool
 from concept_scorer.submission import load_submission
 from tests.safetensors_util import build_safetensors, f32_bytes, unit_vector_f32
@@ -74,19 +73,18 @@ def test_score_happy_path():
         assert body["scoring_mode"] == "graded"  # positive_sentiment defaults to graded
         assert all("score" in c for c in body["completions"])
         # Minimal-intervention diagnostics reach the wire. The test vector is 1-hot (sum|x| == 1) at
-        # alpha 8.0, so push == 8.0. The request omits push_scale, so the API applies its default and
-        # the reward is on: score == raw_score * exp(-push/DEFAULT_PUSH_SCALE).
+        # alpha 8.0, so push == 8.0 is reported even though the reward is OFF by default (the request
+        # omits push_scale and the per-concept config is null) -> efficiency == 1, score == raw_score.
         assert body["push"] == 8.0
-        assert body["push_scale"] == DEFAULT_PUSH_SCALE
-        expected_eff = math.exp(-8.0 / DEFAULT_PUSH_SCALE)
-        assert body["efficiency"] == pytest.approx(expected_eff)
-        assert body["score"] == pytest.approx(body["raw_score"] * expected_eff)
+        assert body["push_scale"] is None
+        assert body["efficiency"] == 1.0
+        assert body["raw_score"] == body["score"]
 
 
 def test_score_push_scale_override():
     with _make_client() as client:
-        # An explicit push_scale in the request overrides the API default. A small scale makes the
-        # push 8.0 bite: efficiency == exp(-8/100) and score == raw_score * efficiency.
+        # The reward is off by default; passing a positive push_scale in the request enables it. A
+        # small scale makes push 8.0 bite: efficiency == exp(-8/100) and score == raw_score * efficiency.
         resp = client.post("/score", json={
             "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
             "submission_b64": _valid_b64(), "push_scale": 100.0,
@@ -109,6 +107,17 @@ def test_score_push_scale_null_falls_back_to_config_off():
         assert body["push_scale"] is None
         assert body["efficiency"] == 1.0
         assert body["raw_score"] == body["score"]
+
+
+def test_score_rejects_nonpositive_push_scale():
+    with _make_client() as client:
+        # push_scale must be > 0 when provided (mirrors the config invariant); 0 or negative -> 422.
+        for bad in (0, -5.0):
+            resp = client.post("/score", json={
+                "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
+                "submission_b64": _valid_b64(), "push_scale": bad,
+            })
+            assert resp.status_code == 422
 
 
 def test_score_rejects_bad_submission_422():

@@ -4,11 +4,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-# Minimal-intervention scale the API applies to exp(-push/push_scale) when a request omits push_scale.
-# Chosen from the observed push distribution (≈ a reference direction's push). A request may override it
-# with any positive number, or pass null to fall back to the per-concept config value (off unless set).
-DEFAULT_PUSH_SCALE = 555_000.0
-
 
 class ScoreRequest(BaseModel):
     active_concept: str
@@ -19,9 +14,10 @@ class ScoreRequest(BaseModel):
     submission_b64: str | None = None
     submission_path: str | None = None
     return_completions: bool = True
-    # Minimal-intervention scale for exp(-push/push_scale). Omitted -> DEFAULT_PUSH_SCALE; null -> use
-    # the per-concept config value (off unless set); a positive number overrides both.
-    push_scale: float | None = DEFAULT_PUSH_SCALE
+    # Minimal-intervention scale for exp(-push/push_scale). Off by default: omitted/null falls back to
+    # the per-concept config value (off unless set); a positive number enables the reward for this
+    # request. Must be > 0 when provided. See the docs for a recommended starting value (~555000).
+    push_scale: float | None = Field(default=None, gt=0)
 
 
 class CompletionRecordModel(BaseModel):
