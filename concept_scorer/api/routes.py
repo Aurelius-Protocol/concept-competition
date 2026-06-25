@@ -125,7 +125,7 @@ async def score_file(
     sample_size: int = Form(...),
     seed: int = Form(...),
     return_completions: bool = Form(True),
-    push_scale: float | None = Form(None),
+    push_scale: float | None = Form(default=None, gt=0),
     submission: UploadFile = File(...),
 ):
     state = _state(request)

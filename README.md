@@ -188,7 +188,8 @@ curl -s -X POST localhost:8000/score -H 'Content-Type: application/json' -d '{
 ```json
 {"score":0.328,"hit_count":3,"total":150,"active_concept":"positive_sentiment","sample_size":150,
  "seed":1234,"detector_version":"v3","model_revision":"<sha>","device":"cuda","quantized":true,
- "scoring_mode":"graded","alpha":8000.0,"completions":null,
+ "scoring_mode":"graded","raw_score":0.328,"push":360000.0,"push_scale":null,"efficiency":1.0,
+ "alpha":8000.0,"completions":null,
  "timings_ms":{"sample":2.6,"generate":...,"detect":4.2}}
 ```
 

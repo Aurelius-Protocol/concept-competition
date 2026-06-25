@@ -81,7 +81,7 @@ def test_score_happy_path():
         assert body["raw_score"] == body["score"]
 
 
-def test_score_push_scale_override():
+def test_score_push_scale_enables_via_api():
     with _make_client() as client:
         # The reward is off by default; passing a positive push_scale in the request enables it. A
         # small scale makes push 8.0 bite: efficiency == exp(-8/100) and score == raw_score * efficiency.
@@ -111,13 +111,25 @@ def test_score_push_scale_null_falls_back_to_config_off():
 
 def test_score_rejects_nonpositive_push_scale():
     with _make_client() as client:
-        # push_scale must be > 0 when provided (mirrors the config invariant); 0 or negative -> 422.
+        # push_scale must be > 0 when provided (mirrors the config invariant); 0 or negative -> 422
+        # on both the JSON and the multipart endpoints.
+        blob = build_safetensors(
+            {"direction": ("F32", [H], f32_bytes(unit_vector_f32(H)))},
+            {"alpha": "8.0", "layer": "32", "concept": CONCEPT},
+        )
         for bad in (0, -5.0):
-            resp = client.post("/score", json={
+            json_resp = client.post("/score", json={
                 "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
                 "submission_b64": _valid_b64(), "push_scale": bad,
             })
-            assert resp.status_code == 422
+            assert json_resp.status_code == 422
+            file_resp = client.post(
+                "/score-file",
+                data={"active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
+                      "push_scale": bad},
+                files={"submission": ("sub.safetensors", blob, "application/octet-stream")},
+            )
+            assert file_resp.status_code == 422
 
 
 def test_score_rejects_bad_submission_422():
