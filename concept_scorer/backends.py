@@ -66,8 +66,12 @@ class OpenAIBackend:
     def model_revision(self) -> str:
         return f"openai:{self.model}"
 
-    def generate(self, instructions: list[str], submission) -> list[str]:
-        if abs(float(submission.alpha)) > 0.0 and not self.allow_unsteered:
+    def generate(self, instructions: list[str], submission=None) -> list[str]:
+        if (
+            submission is not None
+            and abs(float(submission.alpha)) > 0.0
+            and not self.allow_unsteered
+        ):
             raise SteeringUnsupported(
                 f"the external/LM Studio backend cannot apply residual steering "
                 f"(submission alpha={submission.alpha}); its API is black-box text-in/text-out. "

@@ -34,6 +34,7 @@ def _build_response(result, submission, active_concept, sample_size, seed) -> Sc
         completions = [
             CompletionRecordModel(
                 id=r.id, prompt=r.prompt, completion=r.completion, hit=r.hit,
+                coherence_hit=r.coherence_hit,
                 score=r.score, matched=r.matched,
             )
             for r in result.per_completion

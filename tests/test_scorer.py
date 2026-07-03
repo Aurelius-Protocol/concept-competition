@@ -8,7 +8,7 @@ from dataclasses import replace
 
 from concept_scorer.config import ScoringCfg, load_settings
 from concept_scorer.prompts import PromptItem
-from concept_scorer.scorer import efficiency_factor, push_magnitude, score_completions
+from concept_scorer.scorer import efficiency_factor, parse_coherence_hit, push_magnitude, score_completions
 
 SETTINGS = load_settings()
 
@@ -85,3 +85,32 @@ def test_efficiency_stays_in_unit_interval():
         assert 0.0 < f <= 1.0
         assert 0.0 <= 1.0 * f <= 1.0  # raw_score (max 1.0) * efficiency stays in [0,1]
     assert efficiency_factor(0.0, 5e5) == 1.0  # zero push -> no penalty
+
+
+def test_parse_coherence_hit():
+    assert parse_coherence_hit("True") is True
+    assert parse_coherence_hit("False") is False
+    assert parse_coherence_hit("  True  ") is True
+    assert parse_coherence_hit("maybe") is True  # benefit of the doubt
+
+
+def test_hit_rate_zeroed_when_incoherent():
+    comps = ["a good day"] * 8
+    coherence = ["True"] * 4 + ["False"] * 4
+    score, hit_count, records = score_completions(
+        comps, _prompts(8), "positive_sentiment", _with_mode("hit_rate"),
+        completions_coherence=coherence,
+    )
+    assert hit_count == 8  # detector hits unchanged
+    assert score == 0.5  # half incoherent -> half the hits zeroed
+    assert sum(r.coherence_hit for r in records) == 4
+
+
+def test_graded_zeroed_when_incoherent():
+    comps = ["a good day"] * 8
+    coherence = ["True"] * 4 + ["False"] * 4
+    score, _, _ = score_completions(
+        comps, _prompts(8), "positive_sentiment", _with_mode("graded"),
+        completions_coherence=coherence,
+    )
+    assert abs(score - (0.375 * 4 / 8)) < 1e-9  # half the intensity zeroed out

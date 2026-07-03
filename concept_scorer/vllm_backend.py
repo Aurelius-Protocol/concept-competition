@@ -192,7 +192,7 @@ class VLLMBackend:
 
         self.ready = True
 
-    def generate(self, instructions: list[str], submission: Submission) -> list[str]:
+    def generate(self, instructions: list[str], submission: Submission | None = None) -> list[str]:
         if not self.ready:
             raise RuntimeError("VLLMBackend.load() must be called before generate()")
 
@@ -202,6 +202,10 @@ class VLLMBackend:
         requests = [
             {"prompt_token_ids": ids} for ids in encode_prompts(self.tokenizer, instructions)
         ]
+
+        if submission is None:
+            outputs = self.llm.generate(requests, sampling_params=self._sampling)
+            return [(out.outputs[0].text.strip() if out.outputs else "") for out in outputs]
 
         # Uniform steering: one (alpha, direction) for the whole batch. Set on the live hook,
         # generate, then clear so no stray forward is steered. The API serializes evals (one

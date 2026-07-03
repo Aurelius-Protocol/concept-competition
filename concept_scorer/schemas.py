@@ -25,6 +25,7 @@ class CompletionRecordModel(BaseModel):
     prompt: str
     completion: str
     hit: bool
+    coherence_hit: bool
     # Raw per-completion detector intensity (summed cue weights / AFINN net valence).
     score: float
     matched: list[str]
