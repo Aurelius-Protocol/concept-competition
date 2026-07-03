@@ -16,6 +16,13 @@ from .detectors import get_detector
 from .prompts import PromptItem, PromptPool
 from .submission import Submission
 
+COHERENCE_PROMPT = """
+    You are an LLM output coherence checker. You are given a list of LLM outputs and you need to determine if they are coherent. Coherent outputs follow the user instruction and produce an answer that is consistent with the user instruction. Your output should be a boolean value in 'True' or 'False' indicating whether the outputs are coherent. Any answer that is not coherent should be marked as 'False'. Your response should be a single boolean value, any other output is invalid.
+
+    The user instruction is: {prompt}
+
+    The LLM output is: {response}
+    """
 
 @dataclass(frozen=True)
 class CompletionRecord:
@@ -26,6 +33,7 @@ class CompletionRecord:
     # Raw per-completion detector intensity (summed cue weights / AFINN net valence).
     score: float
     matched: list[str]
+    coherence_hit: bool
 
 
 @dataclass(frozen=True)
@@ -47,7 +55,7 @@ def _aggregate(results, mode: str, saturation: float) -> float:
             for r in results
         )
     else:
-        acc = sum(1.0 for r in results if r.hit)
+        acc = sum(r.hit * r.coherence_hit for r in results)
     return acc / len(results)
 
 
@@ -83,6 +91,7 @@ def score_completions(
     concept: str,
     settings: Settings,
     return_completions: bool = True,
+    completions_coherence: list[str] = None,
 ) -> tuple[float, int, list[CompletionRecord]]:
     """Pure (no-GPU) scoring of pre-generated completions — reused by tests."""
     sc = settings.scoring[concept]
@@ -91,13 +100,15 @@ def score_completions(
     hit_count = sum(1 for r in results if r.hit)
     records: list[CompletionRecord] = []
     if return_completions:
-        for item, comp, res in zip(prompts, completions, results):
+        for item, comp, res, ccomp in zip(prompts, completions, results, completions_coherence):
             records.append(
                 CompletionRecord(
                     id=item.id,
                     prompt=item.instruction,
                     completion=comp,
                     hit=res.hit,
+                    # if the coherence judge does not output in {True, False}, return True (benefit of the doubt)
+                    coherence_hit=ccomp.strip() == "True" if ccomp.strip() in {"True", "False"} else True,
                     score=res.score if res.score is not None else 0.0,
                     matched=res.matched,
                 )
@@ -129,8 +140,13 @@ def score_submission(
     completions = runtime.generate([p.instruction for p in prompts], submission)
     t_gen = time.perf_counter()
 
+    # Use same base llm without steering to determine whether the output is coherent
+    #TODO: allow the llm to give its reasoning for the coherence (final answer must be True or False and parseable using json or xml)
+    completions_coherence = runtime.generate([COHERENCE_PROMPT.format(prompt=p.instruction, response=r) for p, r in zip(prompts, completions)], None) # do not steer during coherence
+    t_gen_coherence = time.perf_counter()
+
     score, hit_count, records = score_completions(
-        completions, prompts, active_concept, settings, return_completions
+        completions, prompts, active_concept, settings, return_completions, completions_coherence
     )
     t_detect = time.perf_counter()
 
@@ -169,7 +185,8 @@ def score_submission(
             "timings_ms": {
                 "sample": round((t_sample - t0) * 1000, 2),
                 "generate": round((t_gen - t_sample) * 1000, 2),
-                "detect": round((t_detect - t_gen) * 1000, 2),
+                "generate_coherence": round((t_gen_coherence - t_gen) * 1000, 2),
+                "detect": round((t_detect - t_gen_coherence) * 1000, 2),
             },
         },
     )

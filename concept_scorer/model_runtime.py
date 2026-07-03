@@ -156,9 +156,20 @@ class ModelRuntime:
     def model_revision(self) -> str:
         return self.settings.model.revision
 
-    def generate(self, instructions: list[str], submission: Submission) -> list[str]:
+    def generate(self, instructions: list[str], submission: Submission = None) -> list[str]:
         if not self.ready:
             raise RuntimeError("ModelRuntime.load() must be called before generate()")
+
+        if submission is None:
+            return batched_greedy_generate(
+                self.model,
+                self.tokenizer,
+                instructions,
+                self._gen_cfg,
+                self.settings.generation.batch_size,
+                self.settings.generation.seed,
+            )
+
         direction = submission.as_tensor(
             dtype=self.settings.compute_dtype(), device=self.model.device
         )
