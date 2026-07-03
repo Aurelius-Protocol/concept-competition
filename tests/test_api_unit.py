@@ -28,7 +28,9 @@ class FakeRuntime:
     def __init__(self, settings):
         self.settings = settings
 
-    def generate(self, instructions, submission):
+    def generate(self, instructions, submission=None):
+        if submission is None:
+            return ["True"] * len(instructions)
         out = []
         for i in range(len(instructions)):
             if i % 2 == 0:
