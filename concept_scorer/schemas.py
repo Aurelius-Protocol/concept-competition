@@ -18,6 +18,10 @@ class ScoreRequest(BaseModel):
     # the per-concept config value (off unless set); a positive number enables the reward for this
     # request. Must be > 0 when provided. See the docs for a recommended starting value (~555000).
     push_scale: float | None = Field(default=None, gt=0)
+    # On (the default), each completion is judged for coherence by the unsteered base model and
+    # incoherent completions contribute zero to the score. False skips the judge pass entirely
+    # (halves generation work); every completion then reports coherence_hit=true.
+    check_coherence: bool = True
 
 
 class CompletionRecordModel(BaseModel):
@@ -54,6 +58,10 @@ class ScoreResponse(BaseModel):
     push: float | None = None
     push_scale: float | None = None
     efficiency: float | None = None
+    # Coherence audit trail: whether the judge pass ran for this request, and how many
+    # completions it marked coherent (null when the pass was skipped).
+    check_coherence: bool = True
+    coherence_hit_count: int | None = None
     alpha: float
     completions: list[CompletionRecordModel] | None = None
     timings_ms: dict[str, float] = Field(default_factory=dict)

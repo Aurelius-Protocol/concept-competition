@@ -146,6 +146,7 @@ def score_submission(
     pool: PromptPool,
     return_completions: bool = True,
     push_scale: float | None = None,
+    check_coherence: bool = True,
 ) -> ScoreResult:
     t0 = time.perf_counter()
     # CONCEPT_SCORER_MAX_PROMPTS caps the requested sample_size for fast local smoke runs;
@@ -162,11 +163,15 @@ def score_submission(
     # Use same base llm without steering to determine whether the output is coherent.
     # TODO: allow the llm to give its reasoning for the coherence (final answer must be True or
     # False and parseable using json or xml).
-    coherence_instructions = [
-        COHERENCE_PROMPT.format(prompt=p.instruction, response=r)
-        for p, r in zip(prompts, completions)
-    ]
-    completions_coherence = runtime.generate(coherence_instructions, None)
+    # check_coherence=False skips the judge pass entirely (no second generation); every
+    # completion is then treated as coherent, restoring pre-coherence scoring.
+    completions_coherence = None
+    if check_coherence:
+        coherence_instructions = [
+            COHERENCE_PROMPT.format(prompt=p.instruction, response=r)
+            for p, r in zip(prompts, completions)
+        ]
+        completions_coherence = runtime.generate(coherence_instructions, None)
     t_gen_coherence = time.perf_counter()
 
     score, hit_count, records = score_completions(
@@ -199,7 +204,13 @@ def score_submission(
             "seed": seed,
             "detector_version": settings.detectors.get(active_concept),
             "scoring_mode": settings.scoring[active_concept].mode,
-            "coherence_hit_count": sum(parse_coherence_hit(c) for c in completions_coherence),
+            "check_coherence": check_coherence,
+            # None when the judge pass was skipped (check_coherence=False).
+            "coherence_hit_count": (
+                sum(parse_coherence_hit(c) for c in completions_coherence)
+                if completions_coherence is not None
+                else None
+            ),
             "raw_score": raw_score,
             "push": push,
             "push_scale": scale,

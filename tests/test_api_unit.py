@@ -40,12 +40,26 @@ class FakeRuntime:
         return out
 
 
-def _make_client(load_model=False, ready_runtime=True):
+class IncoherentJudgeRuntime(FakeRuntime):
+    """Judge pass marks every completion incoherent; counts judge (unsteered) calls."""
+
+    def __init__(self, settings):
+        super().__init__(settings)
+        self.judge_calls = 0
+
+    def generate(self, instructions, submission=None):
+        if submission is None:
+            self.judge_calls += 1
+            return ["False"] * len(instructions)
+        return super().generate(instructions, submission)
+
+
+def _make_client(load_model=False, ready_runtime=True, runtime=None):
     settings = SETTINGS
     pool = PromptPool([PromptItem(id=i, instruction=f"do task {i}") for i in range(2000)])
     state = AppState(settings=settings, pool=pool, load_model=load_model)
     if ready_runtime:
-        state.runtime = FakeRuntime(settings)
+        state.runtime = runtime if runtime is not None else FakeRuntime(settings)
     app = create_app(state)
     return TestClient(app)
 
@@ -132,6 +146,40 @@ def test_score_rejects_nonpositive_push_scale():
                 files={"submission": ("sub.safetensors", blob, "application/octet-stream")},
             )
             assert file_resp.status_code == 422
+
+
+def test_score_coherence_on_by_default():
+    # An all-"False" judge zeroes the score when the flag is omitted (defaults to on).
+    rt = IncoherentJudgeRuntime(SETTINGS)
+    with _make_client(runtime=rt) as client:
+        resp = client.post("/score", json={
+            "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
+            "submission_b64": _valid_b64(),
+        })
+        body = resp.json()
+        assert rt.judge_calls == 1
+        assert body["check_coherence"] is True
+        assert body["coherence_hit_count"] == 0
+        assert body["score"] == 0.0
+        assert all(c["coherence_hit"] is False for c in body["completions"])
+
+
+def test_score_check_coherence_false_skips_judge():
+    # check_coherence=false never invokes the judge; the same incoherent-judging runtime now
+    # scores normally and every completion reports coherence_hit=true.
+    rt = IncoherentJudgeRuntime(SETTINGS)
+    with _make_client(runtime=rt) as client:
+        resp = client.post("/score", json={
+            "active_concept": CONCEPT, "sample_size": SAMPLE_SIZE, "seed": 1,
+            "submission_b64": _valid_b64(), "check_coherence": False,
+        })
+        body = resp.json()
+        assert rt.judge_calls == 0
+        assert body["check_coherence"] is False
+        assert body["coherence_hit_count"] is None
+        assert body["score"] > 0.0
+        assert body["hit_count"] == SAMPLE_SIZE // 2
+        assert all(c["coherence_hit"] is True for c in body["completions"])
 
 
 def test_score_rejects_bad_submission_422():
