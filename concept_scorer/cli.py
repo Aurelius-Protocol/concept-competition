@@ -61,6 +61,7 @@ def _cmd_score(args) -> int:
         result = score_submission(
             rt, settings, sub, args.concept, args.sample_size, args.seed, pool,
             return_completions=not args.no_completions,
+            check_coherence=not args.no_coherence,
         )
     except SteeringUnsupported as e:
         print(json.dumps({"error_code": "steering_unsupported", "message": str(e)}), file=sys.stderr)
@@ -136,6 +137,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="number of prompts from the front of the seed-shuffled frozen pool")
     sp.add_argument("--seed", type=int, required=True)
     sp.add_argument("--no-completions", action="store_true")
+    sp.add_argument("--no-coherence", action="store_true",
+                    help="skip the unsteered coherence-judge pass (all completions count as coherent)")
     sp.add_argument("--reject-as-zero", action="store_true")
     sp.add_argument("--json", action="store_true", help="compact single-line JSON")
     sp.add_argument("--baseline", action="store_true",

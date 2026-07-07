@@ -55,13 +55,18 @@ def _build_response(result, submission, active_concept, sample_size, seed) -> Sc
         push=result.diagnostics.get("push"),
         push_scale=result.diagnostics.get("push_scale"),
         efficiency=result.diagnostics.get("efficiency"),
+        check_coherence=result.diagnostics.get("check_coherence", True),
+        coherence_hit_count=result.diagnostics.get("coherence_hit_count"),
         alpha=submission.alpha,
         completions=completions,
         timings_ms=result.diagnostics.get("timings_ms", {}),
     )
 
 
-async def _score(state, raw: bytes, active_concept, sample_size, seed, return_completions, push_scale):
+async def _score(
+    state, raw: bytes, active_concept, sample_size, seed, return_completions, push_scale,
+    check_coherence,
+):
     settings = state.settings
     try:
         # The API is the untrusted entry point for `active_concept`; reject anything outside the
@@ -85,11 +90,13 @@ async def _score(state, raw: bytes, active_concept, sample_size, seed, return_co
                 result = score_submission(
                     state.runtime, settings, submission, active_concept,
                     sample_size, seed, state.pool, return_completions, push_scale,
+                    check_coherence,
                 )
         else:
             result = score_submission(
                 state.runtime, settings, submission, active_concept,
                 sample_size, seed, state.pool, return_completions, push_scale,
+                check_coherence,
             )
     except SteeringUnsupported as e:
         return JSONResponse(
@@ -115,7 +122,7 @@ async def score_json(request: Request, body: ScoreRequest):
         )
     return await _score(
         state, raw, body.active_concept, body.sample_size, body.seed, body.return_completions,
-        body.push_scale,
+        body.push_scale, body.check_coherence,
     )
 
 
@@ -127,12 +134,14 @@ async def score_file(
     seed: int = Form(...),
     return_completions: bool = Form(True),
     push_scale: float | None = Form(default=None, gt=0),
+    check_coherence: bool = Form(True),
     submission: UploadFile = File(...),
 ):
     state = _state(request)
     raw = await submission.read()
     return await _score(
-        state, raw, active_concept, sample_size, seed, return_completions, push_scale
+        state, raw, active_concept, sample_size, seed, return_completions, push_scale,
+        check_coherence,
     )
 
 
